@@ -71,7 +71,14 @@ pub enum NodeEvent {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Output {
-    Write { link: LinkId, frame: Vec<u8> },
+    Write {
+        link: LinkId,
+        frame: Vec<u8>,
+    },
+    /// Disconnect this link: the same peer is on a newer one.
+    Close {
+        link: LinkId,
+    },
     Event(NodeEvent),
 }
 
@@ -251,6 +258,11 @@ impl MeshNode {
         }
         let events = self.sessions.tick(now_ms);
         self.on_session_events(events, now_ms);
+        // A neighbour with a live link stays, announce or not (iOS
+        // announces rarely on an idle link).
+        for peer in self.connected_peers() {
+            self.peers.touch(&peer, now_ms);
+        }
         for peer in self.peers.expire(now_ms) {
             self.emit(NodeEvent::PeerLeft(peer.peer_id));
         }
@@ -291,7 +303,15 @@ impl MeshNode {
         if packet.sender_id == local {
             return; // our own packet, echoed back
         }
+        // A peer sends its announce down every link, so copies on other
+        // links are duplicates; they still show which peer a link reaches.
+        if packet.packet_type == t::ANNOUNCE && packet.ttl == DEFAULT_TTL {
+            self.bind_known(link, &packet);
+        }
         let bound = self.links.get(&link).and_then(|l| l.peer);
+        if let Some(neighbour) = bound {
+            self.peers.touch(&neighbour, now_ms);
+        }
         // Sync requests are link-local: the sender must be the link's peer.
         if packet.packet_type == t::REQUEST_SYNC && bound.is_some_and(|b| b != packet.sender_id) {
             return;
@@ -387,6 +407,40 @@ impl MeshNode {
         }
     }
 
+    /// Binds a link to an already known peer whose direct announce verifies.
+    fn bind_known(&mut self, link: LinkId, packet: &Packet) {
+        let sender = packet.sender_id;
+        if self.links.get(&link).is_none_or(|l| l.peer == Some(sender)) {
+            return;
+        }
+        let Some(key) = self.peers.get(&sender).map(|p| p.signing_public) else {
+            return;
+        };
+        if verify(packet, &key) {
+            self.bind(link, sender);
+        }
+    }
+
+    /// iOS `BLERedundantLinkPolicy`: a phone that changed its address can sit
+    /// on several links at once. Keep the newest connection, close the rest.
+    fn bind(&mut self, link: LinkId, peer: PeerId) {
+        let Some(l) = self.links.get_mut(&link) else {
+            return;
+        };
+        l.peer = Some(peer);
+        let same: Vec<LinkId> = self
+            .links
+            .iter()
+            .filter(|(_, l)| l.peer == Some(peer))
+            .map(|(id, _)| *id)
+            .collect();
+        let newest = same.iter().copied().max().unwrap_or(link);
+        for old in same.into_iter().filter(|id| *id != newest) {
+            self.links.remove(&old);
+            self.out.push(Output::Close { link: old });
+        }
+    }
+
     fn handle_announce(&mut self, link: LinkId, packet: &Packet, now_ms: u64) {
         let Ok(outcome) = self.peers.on_announce(packet, now_ms) else {
             return;
@@ -396,8 +450,8 @@ impl MeshNode {
             AnnounceOutcome::Updated(p) => (p, false),
         };
         let direct = packet.ttl == DEFAULT_TTL;
-        if direct && let Some(l) = self.links.get_mut(&link) {
-            l.peer = Some(peer.peer_id);
+        if direct {
+            self.bind(link, peer.peer_id);
         }
         self.sync.on_packet_seen(packet, now_ms);
         if fresh {

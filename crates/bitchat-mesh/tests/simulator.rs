@@ -56,6 +56,13 @@ impl Sim {
                         self.queue.push_back((other, other_link, frame));
                     }
                 }
+                Output::Close { link } => {
+                    if let Some(other) = self.wires.remove(&(node, link)) {
+                        self.wires.remove(&other);
+                        let out = self.nodes[other.0].link_down(other.1);
+                        self.handle(other.0, out);
+                    }
+                }
                 Output::Event(e) => self.events[node].push(e),
             }
         }
@@ -291,4 +298,40 @@ fn leaving_and_silent_peers_drop_out() {
     sim.disconnect(0, 1);
     sim.run(65_000);
     assert!(sim.events[1].contains(&NodeEvent::PeerLeft(alice)));
+}
+
+#[test]
+fn a_peer_on_two_links_keeps_the_newest() {
+    let mut sim = Sim::new(&["alice", "bob"], 512);
+    sim.connect(0, 1);
+    sim.run(500);
+    // Bob shows up again under a new address while the old link lives on.
+    sim.connect(0, 1);
+    sim.run(500);
+    let alice_links: Vec<_> = sim
+        .wires
+        .keys()
+        .filter(|(n, _)| *n == 0)
+        .map(|(_, l)| *l)
+        .collect();
+    assert_eq!(alice_links.len(), 1, "one link left: {alice_links:?}");
+    assert!(alice_links[0] >= 3, "the newer one");
+    sim.act(1, |n, now| n.send_public("still here", now));
+    sim.run(200);
+    assert_eq!(sim.public_texts(0).len(), 1);
+}
+
+#[test]
+fn connected_neighbours_stay_without_announces() {
+    let mut sim = Sim::new(&["alice", "bob"], 512);
+    sim.connect(0, 1);
+    sim.run(200);
+    // Long quiet stretch on a live link: no PeerLeft.
+    sim.run(90_000);
+    assert!(sim.knows(0, 1) && sim.knows(1, 0));
+    assert!(
+        !sim.events[0]
+            .iter()
+            .any(|e| matches!(e, NodeEvent::PeerLeft(_)))
+    );
 }

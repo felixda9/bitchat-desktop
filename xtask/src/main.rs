@@ -7,13 +7,18 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod mesh_cli;
+
 fn main() {
     let task = std::env::args().nth(1).unwrap_or_default();
     match task.as_str() {
         "export-rust-vectors" => export_rust_vectors(),
         "geo-watch" => geo_watch(std::env::args().nth(2).unwrap_or_default()),
+        "mesh" => mesh_cli::run(&std::env::args().skip(2).collect::<Vec<_>>()),
         _ => {
-            eprintln!("usage: cargo xtask export-rust-vectors | geo-watch <geohash>");
+            eprintln!(
+                "usage: cargo xtask export-rust-vectors | geo-watch <geohash> | mesh [nickname] [--inbox FILE]"
+            );
             std::process::exit(1);
         }
     }

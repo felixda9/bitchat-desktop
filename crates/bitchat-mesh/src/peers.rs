@@ -204,6 +204,13 @@ impl PeerTable {
         self.peers.remove(&packet.sender_id)
     }
 
+    /// Traffic from a neighbour (or a live link to it) keeps it reachable.
+    pub fn touch(&mut self, peer: &PeerId, now_ms: u64) {
+        if let Some(p) = self.peers.get_mut(peer) {
+            p.last_seen_ms = p.last_seen_ms.max(now_ms);
+        }
+    }
+
     /// Drops peers not heard from within the reachability window.
     pub fn expire(&mut self, now_ms: u64) -> Vec<Peer> {
         let gone: Vec<PeerId> = self
