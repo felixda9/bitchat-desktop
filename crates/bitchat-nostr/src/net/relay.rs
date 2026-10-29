@@ -107,7 +107,34 @@ async fn run(
 
     'outer: loop {
         status(RelayStatus::Connecting);
-        let delay = match transport::connect(&url, &dialer, &tls).await {
+        // Connecting can wait a long time (Tor bootstrapping), so keep
+        // handling commands meanwhile: a new dialer restarts the attempt.
+        let connecting = {
+            let (url, dialer, tls) = (url.clone(), dialer.clone(), tls.clone());
+            async move { transport::connect(&url, &dialer, &tls).await }
+        };
+        tokio::pin!(connecting);
+        let result = loop {
+            tokio::select! {
+                r = &mut connecting => break r,
+                cmd = commands.recv() => match cmd {
+                    None | Some(Command::Shutdown) => break 'outer,
+                    Some(Command::SetDialer(d)) => {
+                        dialer = d;
+                        attempt = 0;
+                        continue 'outer;
+                    }
+                    Some(Command::Subscribe { id, frame }) => {
+                        state.subs.insert(id, frame);
+                    }
+                    Some(Command::Unsubscribe { id }) => {
+                        state.subs.remove(&id);
+                    }
+                    Some(Command::Publish { frame }) => state.queue(frame),
+                },
+            }
+        };
+        let delay = match result {
             Ok(socket) => {
                 attempt = 0;
                 status(RelayStatus::Connected);

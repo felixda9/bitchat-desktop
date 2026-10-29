@@ -227,3 +227,33 @@ async fn resubscribes_after_reconnect() {
     assert_eq!(event.content, "after reconnect");
     assert!(*relay.connections.lock().unwrap() >= 2);
 }
+
+/// A relay stuck waiting for its dialer (Tor bootstrapping) must still
+/// switch when the dialer changes, keeping its subscriptions.
+#[tokio::test]
+async fn switching_dialer_unsticks_waiting_relays() {
+    let keys = Keys::generate();
+    let relay = MockRelay::default();
+    relay
+        .stored
+        .lock()
+        .unwrap()
+        .push(geo_event(&keys, "after switch"));
+    let url = relay.clone().start().await;
+
+    let (pool, mut rx) = RelayPool::spawn(Dialer::Offline);
+    pool.subscribe(
+        "geo-u4pruy",
+        Filter::geohash_ephemeral("u4pruy", None, 200),
+        &[url],
+    );
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(*relay.connections.lock().unwrap(), 0);
+
+    pool.set_dialer(Dialer::Direct);
+    let got = next(&mut rx, |e| matches!(e, PoolEvent::Event { .. })).await;
+    let PoolEvent::Event { event, .. } = got else {
+        unreachable!()
+    };
+    assert_eq!(event.content, "after switch");
+}

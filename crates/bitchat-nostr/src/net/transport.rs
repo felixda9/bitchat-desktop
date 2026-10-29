@@ -28,6 +28,8 @@ pub enum Dialer {
     Direct,
     /// Through Tor; waits for Tor rather than falling back.
     Tor(Tor),
+    /// Never connects: networking paused.
+    Offline,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -75,6 +77,7 @@ impl Dialer {
                 Err(e) if e.kind() == ErrorKind::RemoteHostNotFound => Err(ConnectError::Dns),
                 Err(e) => Err(ConnectError::Tor(e.to_string())),
             },
+            Dialer::Offline => Err(ConnectError::Io(std::io::Error::other("offline"))),
         }
     }
 
@@ -85,8 +88,10 @@ impl Dialer {
 
     /// Waits until the dialer can be used (Tor bootstrapped).
     pub async fn ready(&self) {
-        if let Dialer::Tor(tor) = self {
-            tor.wait_ready().await;
+        match self {
+            Dialer::Direct => {}
+            Dialer::Tor(tor) => tor.wait_ready().await,
+            Dialer::Offline => std::future::pending().await,
         }
     }
 }
