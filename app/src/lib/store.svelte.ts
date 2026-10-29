@@ -1,4 +1,4 @@
-import type { Conversation, DmMessage, Note, Person, PublicMessage, UiEvent } from "./api";
+import type { Conversation, DmMessage, Note, Person, PublicMessage, RegionalChannel, UiEvent } from "./api";
 
 export type Line = { kind: "public"; message: PublicMessage } | { kind: "system"; text: string; timestamp: number };
 export type DmLine = { kind: "dm"; message: DmMessage } | { kind: "system"; text: string; timestamp: number };
@@ -17,6 +17,7 @@ export const app = $state({
   relays: {} as Record<string, string>,
   settings: { tor_enabled: true, custom_relays: [] as string[], key_in_keychain: true, has_location: false },
   notes: [] as Note[],
+  regional: [] as RegionalChannel[],
   wipedAt: 0,
 });
 
@@ -27,6 +28,9 @@ function pushTimeline(line: Line) {
 
 export function handle(e: UiEvent) {
   switch (e.type) {
+    case "location":
+      app.regional = e.channels;
+      break;
     case "identity":
       app.nickname = e.nickname;
       app.npub = e.npub;
@@ -90,6 +94,7 @@ export function handle(e: UiEvent) {
       app.dm = null;
       app.conversations = [];
       app.notes = [];
+      app.regional = [];
       app.people = { count: 0, unknown: false, list: [] };
       app.wipedAt = Date.now();
       break;

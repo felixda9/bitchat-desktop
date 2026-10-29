@@ -45,7 +45,13 @@ export interface Note {
   own: boolean;
 }
 
+export interface RegionalChannel {
+  level: string;
+  geohash: string;
+}
+
 export type UiEvent =
+  | { type: "location"; channels: RegionalChannel[] }
   | { type: "identity"; nickname: string; npub: string }
   | { type: "channel"; geohash: string | null; level: string | null; teleported: boolean }
   | { type: "public"; message: PublicMessage }
@@ -84,6 +90,7 @@ export const api = {
   addRelay: (url: string) => invoke("add_relay", { url }),
   removeRelay: (url: string) => invoke("remove_relay", { url }),
   setLocation: (lat: number | null, lon: number | null) => invoke("set_location", { lat, lon }),
+  locate: () => invoke<[number, number]>("locate"),
   wipe: () => invoke("wipe"),
 };
 

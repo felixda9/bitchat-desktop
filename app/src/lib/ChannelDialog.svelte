@@ -4,6 +4,8 @@
 
   let { onClose }: { onClose: () => void } = $props();
   let raw = $state("");
+  let locating = $state(false);
+  let locateError = $state("");
   const geohash = $derived(cleanGeohash(raw));
 
   function join() {
@@ -11,11 +13,42 @@
     api.join(geohash, true);
     onClose();
   }
+
+  function joinLocal(g: string) {
+    api.join(g, false);
+    onClose();
+  }
+
+  async function locate() {
+    locating = true;
+    locateError = "";
+    try {
+      await api.locate();
+    } catch (e) {
+      locateError = String(e);
+    } finally {
+      locating = false;
+    }
+  }
 </script>
 
 <div class="backdrop" role="presentation" onclick={onClose}>
   <div class="dialog" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === "Escape" && onClose()}>
     <h2>location channels</h2>
+    {#if app.regional.length}
+      <ul class="local">
+        {#each app.regional as c (c.geohash)}
+          <li>
+            <button class="pick" onclick={() => joinLocal(c.geohash)}>
+              #{c.geohash} <span class="muted">{c.level}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <button class="pick" onclick={locate} disabled={locating}>{locating ? "finding you…" : "use my location"}</button>
+      {#if locateError}<p class="warn">{locateError}</p>{/if}
+    {/if}
     <p class="muted">
       type a geohash to join that area's channel. joining an area you're not in marks you as teleported (↗) to
       people there.
@@ -76,6 +109,19 @@
   button:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+  .local {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 8px;
+  }
+  .pick {
+    background: none;
+    color: var(--accent);
+    border: 1px solid var(--line);
+    width: 100%;
+    text-align: left;
+    margin: 2px 0;
   }
   .leave {
     margin-top: 12px;

@@ -62,8 +62,18 @@ pub struct Note {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RegionalChannel {
+    pub level: String,
+    pub geohash: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UiEvent {
+    /// Channels for the current location fix (empty without one).
+    Location {
+        channels: Vec<RegionalChannel>,
+    },
     Identity {
         nickname: String,
         npub: String,

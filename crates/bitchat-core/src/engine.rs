@@ -300,6 +300,17 @@ impl Engine {
                 .collect(),
         });
         self.subscribe_notes(now_ms);
+        // The building level is left out of the picker, as on iOS.
+        let channels = self
+            .regional_channels()
+            .into_iter()
+            .filter(|(l, _)| *l != Level::Building)
+            .map(|(l, g)| RegionalChannel {
+                level: level_name(l).to_string(),
+                geohash: g,
+            })
+            .collect();
+        self.ui(UiEvent::Location { channels });
         self.emit_settings();
     }
 

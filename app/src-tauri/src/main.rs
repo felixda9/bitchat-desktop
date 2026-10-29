@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod location;
+
 use bitchat_core::runtime::{App, Command};
 use bitchat_core::storage::Storage;
 use std::sync::Arc;
@@ -55,6 +57,14 @@ fn set_location(app: State<'_, App>, lat: Option<f64>, lon: Option<f64>) {
     send(&app, Command::SetLocation { fix });
 }
 
+/// Asks the OS for a location fix and hands it to the core.
+#[tauri::command]
+async fn locate(app: State<'_, App>) -> Result<(f64, f64), String> {
+    let fix = location::locate().await?;
+    app.send(Command::SetLocation { fix: Some(fix) });
+    Ok(fix)
+}
+
 #[tauri::command]
 fn wipe(app: State<'_, App>) {
     send(&app, Command::Wipe);
@@ -84,6 +94,7 @@ fn main() {
             add_relay,
             remove_relay,
             set_location,
+            locate,
             wipe
         ])
         .run(tauri::generate_context!())
