@@ -33,11 +33,12 @@ pub async fn locate() -> Result<(f64, f64), String> {
 #[cfg(target_os = "linux")]
 pub async fn locate() -> Result<(f64, f64), String> {
     use futures_lite::StreamExt;
-    use zbus::zvariant::OwnedObjectPath;
-    use zbus::{Connection, Proxy};
+    use zbus::{Connection, OwnedObjectPath, Proxy};
 
     const BUS: &str = "org.freedesktop.GeoClue2";
-    let fail = |e: zbus::Error| format!("location unavailable (geoclue): {e}");
+    fn fail(e: impl std::fmt::Display) -> String {
+        format!("location unavailable (geoclue): {e}")
+    }
 
     let conn = Connection::system().await.map_err(fail)?;
     let manager = Proxy::new(
@@ -55,12 +56,12 @@ pub async fn locate() -> Result<(f64, f64), String> {
     client
         .set_property("DesktopId", "bitchat-desktop")
         .await
-        .map_err(|e| fail(e.into()))?;
+        .map_err(fail)?;
     // 8 = exact; GeoClue may still give city-level accuracy.
     client
         .set_property("RequestedAccuracyLevel", 8u32)
         .await
-        .map_err(|e| fail(e.into()))?;
+        .map_err(fail)?;
 
     let mut updates = client
         .receive_signal("LocationUpdated")
