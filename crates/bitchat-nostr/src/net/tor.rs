@@ -38,6 +38,30 @@ pub enum TorError {
     Client(#[from] arti_client::Error),
 }
 
+/// Builds Tor's runtime on a dedicated thread (it can't be built from inside
+/// an async task) and keeps one handle there forever, so the runtime is
+/// never dropped from async code either.
+fn own_runtime() -> Result<PreferredRuntime, TorError> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("tor-runtime".into())
+        .spawn(move || match PreferredRuntime::create() {
+            Ok(runtime) => {
+                let _ = tx.send(Ok(runtime.clone()));
+                loop {
+                    std::thread::park();
+                }
+            }
+            Err(e) => {
+                let _ = tx.send(Err(e.to_string()));
+            }
+        })
+        .map_err(|e| TorError::Config(e.to_string()))?;
+    rx.recv()
+        .map_err(|_| TorError::Config("tor runtime thread died".into()))?
+        .map_err(TorError::Config)
+}
+
 #[derive(Clone)]
 pub struct Tor {
     client: Arc<TorClient<PreferredRuntime>>,
@@ -53,7 +77,7 @@ impl Tor {
         let config = TorClientConfigBuilder::from_directories(state_dir, cache_dir)
             .build()
             .map_err(|e| TorError::Config(e.to_string()))?;
-        let runtime = PreferredRuntime::create().map_err(|e| TorError::Config(e.to_string()))?;
+        let runtime = own_runtime()?;
         let client = TorClient::with_runtime(runtime.clone())
             .config(config)
             .create_unbootstrapped()?;
@@ -118,5 +142,19 @@ impl Tor {
     /// Opens a stream to `host:port` on its own circuit.
     pub async fn connect(&self, host: &str, port: u16) -> Result<DataStream, arti_client::Error> {
         self.client.isolated_client().connect((host, port)).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The app starts Tor from inside its async runtime; that must not panic.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn starts_inside_async_runtime() {
+        let dir = std::env::temp_dir().join(format!("bitchat-tor-start-{}", std::process::id()));
+        let tor = Tor::start(&dir.join("state"), &dir.join("cache")).expect("tor starts");
+        assert!(matches!(*tor.status().borrow(), TorStatus::Starting { .. }));
+        drop(tor);
     }
 }
