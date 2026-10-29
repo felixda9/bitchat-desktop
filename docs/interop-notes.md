@@ -170,6 +170,19 @@ with even Y, then odd Y (because the parity byte of S depends on it). Plaintext 
 - iOS-only, later phases: 0x04 courier, 0x23 board, 0x24 prekeyBundle, 0x25 group, 0x28 nostrCarrier,
   0x29 voice. Unknown types are decoded and flood-relayed.
 
+### 5.1 Relaying (`RelayController.swift`, `BLEReceivePipeline.swift`)
+- Duplicate key: sender ‖ timestamp ‖ type ‖ SHA256(decompressed payload)[0:4]; kept 5 min,
+  past 1000 trimmed to 750. Fragments and our own TTL-0 sync replays skip it.
+- No relay: REQUEST_SYNC, TTL ≤ 1 (after capping at 7), our own packets, packets for us.
+- Handshakes, directed 0x11/0x04/0x26/0x27/0x28 and directed fragments: TTL−1, jitter
+  10–35 ms (handshake) or 20–60 ms.
+- Fragments and voice: cap 7 (5 when ≥ 6 peers connected), TTL−1, 8–25 ms.
+- Broadcast: ≥ 6 peers → clamp(2,5); ≤ 2 → as received; else clamp(2,6), or clamp(2,7) for
+  announces and urgent board posts; then −1. Jitter by degree: ≤2 10–40, 3–5 60–150,
+  6–9 80–180, else 100–220 ms. A duplicate cancels a waiting relay when > 2 peers connected.
+- Source routes: forward to the next hop (or the recipient after the last hop) with TTL−1 if
+  connected, else flood. Not in the route → first hop. TTL ≤ 1 or packet for us → stop.
+
 ## 6. Noise (`bitchat/Noise/NoiseProtocol.swift`, `NoiseSessionManager.swift`)
 - `Noise_XX_25519_ChaChaPoly_SHA256`, empty prologue, standard SymmetricState/HKDF/Split.
   ChaCha nonce = 4 zero bytes ‖ LE64 counter (standard).

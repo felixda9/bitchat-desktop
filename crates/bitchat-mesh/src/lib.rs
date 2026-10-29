@@ -7,6 +7,7 @@ pub mod fragment;
 pub mod identity;
 pub mod peer_state;
 pub mod peers;
+pub mod relay;
 pub mod sessions;
 
 pub use identity::{MeshIdentity, verify};
