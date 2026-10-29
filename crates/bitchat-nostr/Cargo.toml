@@ -10,12 +10,35 @@ base64 = "0.23.1"
 bech32 = "0.12.0"
 bitchat-proto = { version = "0.1.0", path = "../bitchat-proto" }
 chacha20poly1305 = "0.11.0"
+futures-util = { version = "0.3.34", optional = true }
 getrandom = "0.4.3"
 hex = "0.4.3"
 hkdf = "0.13.0"
 hmac = "0.13.0"
-secp256k1 = { version = "0.33.1", features = ["rand", "global-context", "std"], default-features = false }
+log = "0.4.34"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"], optional = true }
+secp256k1 = { version = "0.33.1", features = ["global-context", "std"], default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
 thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net", "io-util"], optional = true }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "logging", "tls12"], optional = true }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"], optional = true }
+url = { version = "2.5.8", optional = true }
+webpki-roots = { version = "1.0.11", optional = true }
+
+[features]
+net = [
+    "dep:tokio",
+    "dep:tokio-tungstenite",
+    "dep:tokio-rustls",
+    "dep:rustls",
+    "dep:webpki-roots",
+    "dep:futures-util",
+    "dep:url",
+]
+
+[dev-dependencies]
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "time"] }
