@@ -25,6 +25,7 @@ struct InteropExportTests {
         out["private_message"] = privateMessages()
         out["compression"] = compression()
         out["geohash"] = geohash()
+        out["noise"] = try noise()
 
         let folder = URL(fileURLWithPath: dir).appendingPathComponent("swift")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -249,6 +250,51 @@ struct InteropExportTests {
             ])
         }
         return rows
+    }
+
+    // MARK: - Noise
+
+    /// XX with fixed keys, then transport frames in bitchat's extracted-nonce
+    /// format (`BE32(nonce) || ciphertext || tag`).
+    private func noise() throws -> [String: Any] {
+        func key(_ fill: UInt8) throws -> Curve25519.KeyAgreement.PrivateKey {
+            try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: Data(repeating: fill, count: 32))
+        }
+        let initStatic = try key(0x11), initEphemeral = try key(0x12)
+        let respStatic = try key(0x21), respEphemeral = try key(0x22)
+        let initiator = NoiseHandshakeState(
+            role: .initiator, pattern: .XX, keychain: MockKeychain(),
+            localStaticKey: initStatic, predeterminedEphemeralKey: initEphemeral
+        )
+        let responder = NoiseHandshakeState(
+            role: .responder, pattern: .XX, keychain: MockKeychain(),
+            localStaticKey: respStatic, predeterminedEphemeralKey: respEphemeral
+        )
+        let m1 = try initiator.writeMessage()
+        _ = try responder.readMessage(m1)
+        let m2 = try responder.writeMessage()
+        _ = try initiator.readMessage(m2)
+        let m3 = try initiator.writeMessage()
+        _ = try responder.readMessage(m3)
+
+        let (iSend, iReceive, hash) = try initiator.getTransportCiphers(useExtractedNonce: true)
+        let (rSend, _, _) = try responder.getTransportCiphers(useExtractedNonce: true)
+        var frames: [[String: Any]] = []
+        for (i, text) in ["hello", "", String(repeating: "x", count: 300)].enumerated() {
+            let fromInitiator = i % 2 == 0
+            let frame = try (fromInitiator ? iSend : rSend).encrypt(plaintext: Data(text.utf8))
+            frames.append(["from_initiator": fromInitiator, "plaintext": Data(text.utf8).hexEncodedString(), "frame": frame.hexEncodedString()])
+        }
+        _ = iReceive
+        return [
+            "init_static": initStatic.rawRepresentation.hexEncodedString(),
+            "init_ephemeral": initEphemeral.rawRepresentation.hexEncodedString(),
+            "resp_static": respStatic.rawRepresentation.hexEncodedString(),
+            "resp_ephemeral": respEphemeral.rawRepresentation.hexEncodedString(),
+            "messages": [m1.hexEncodedString(), m2.hexEncodedString(), m3.hexEncodedString()],
+            "handshake_hash": hash.hexEncodedString(),
+            "frames": frames
+        ]
     }
 
     // MARK: - Packets
