@@ -72,6 +72,9 @@ pub struct PeerTable {
     peers: HashMap<PeerId, Peer>,
     /// Trust on first use: keys seen for a peer ID, kept after it goes away.
     pins: HashMap<PeerId, ([u8; 32], [u8; 32])>,
+    /// Timestamp of each peer's signed leave. Relays can deliver an announce
+    /// sent just before the leave after it; those must not bring it back.
+    left: HashMap<PeerId, u64>,
 }
 
 impl PeerTable {
@@ -80,6 +83,7 @@ impl PeerTable {
             local,
             peers: HashMap::new(),
             pins: HashMap::new(),
+            left: HashMap::new(),
         }
     }
 
@@ -116,7 +120,12 @@ impl PeerTable {
         if packet.sender_id == self.local {
             return Err(Rejection::SelfAnnounce);
         }
-        if stale(packet.timestamp, now_ms, ANNOUNCE_MAX_AGE_MS) {
+        if stale(packet.timestamp, now_ms, ANNOUNCE_MAX_AGE_MS)
+            || self
+                .left
+                .get(&packet.sender_id)
+                .is_some_and(|&at| packet.timestamp <= at)
+        {
             return Err(Rejection::Stale);
         }
         if !timestamp_ok(packet, now_ms) {
@@ -191,6 +200,7 @@ impl PeerTable {
         if !verify(packet, &key) {
             return None;
         }
+        self.left.insert(packet.sender_id, packet.timestamp);
         self.peers.remove(&packet.sender_id)
     }
 
@@ -202,6 +212,10 @@ impl PeerTable {
             .filter(|p| now_ms.saturating_sub(p.last_seen_ms) > REACHABLE_MS)
             .map(|p| p.peer_id)
             .collect();
+        // Announces older than this are stale anyway.
+        self.left.retain(|_, at| {
+            now_ms.saturating_sub(*at) <= ANNOUNCE_MAX_AGE_MS + MAX_TIMESTAMP_SKEW_MS
+        });
         gone.iter().filter_map(|id| self.peers.remove(id)).collect()
     }
 

@@ -124,3 +124,25 @@ fn public_messages_need_the_senders_signature() {
     assert!(table.on_leave(&leave).is_some());
     assert!(table.get(&alice.peer_id()).is_none());
 }
+
+#[test]
+fn announces_from_before_a_leave_are_ignored() {
+    let alice = MeshIdentity::new([3; 32], [4; 32]);
+    let mut table = PeerTable::new(me().peer_id());
+    let early = alice.announce("alice", &[], 0, NOW).unwrap();
+    table.on_announce(&early, NOW).unwrap();
+    assert!(table.on_leave(&alice.leave(NOW + 10).unwrap()).is_some());
+
+    // A relay delivers the earlier announce after the leave.
+    let mut relayed = early.clone();
+    relayed.ttl = 6;
+    assert_eq!(table.on_announce(&relayed, NOW + 20), Err(Rejection::Stale));
+    let same_ms = alice.announce("alice", &[], 0, NOW + 10).unwrap();
+    assert_eq!(table.on_announce(&same_ms, NOW + 20), Err(Rejection::Stale));
+    // Coming back later works.
+    let back = alice.announce("alice", &[], 0, NOW + 5_000).unwrap();
+    assert!(matches!(
+        table.on_announce(&back, NOW + 5_000),
+        Ok(AnnounceOutcome::New(_))
+    ));
+}
