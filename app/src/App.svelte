@@ -28,6 +28,12 @@
     };
   });
 
+  // A wipe drops the location fix with everything else; ask again, like the
+  // phones re-reading GPS.
+  $effect(() => {
+    if (app.wipedAt) api.locate().catch(() => {});
+  });
+
   function wipe() {
     confirmWipe = false;
     showSettings = false;
