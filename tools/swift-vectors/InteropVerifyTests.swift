@@ -1,6 +1,7 @@
 // Checks output produced by the Rust client against the bitchat iOS code.
 // Reads $BITCHAT_INTEROP_DIR/rust/*.json; each test is skipped when its file is missing.
 
+import CryptoKit
 import Foundation
 import Testing
 @testable import BitFoundation
@@ -83,6 +84,88 @@ struct InteropVerifyTests {
             } else {
                 #expect(String(data: payload.data, encoding: .utf8) == item.message_id)
             }
+        }
+    }
+
+    private struct MeshPacketCase: Decodable {
+        let name: String
+        let wire: String
+        let noise_public: String
+        let signing_public: String
+        let nickname: String?
+    }
+
+    private struct GcsCase: Decodable {
+        let ids: [String]
+        let max_bytes: Int
+        let p: Int
+        let m: UInt32
+        let data: String
+        let included: Int
+    }
+
+    private struct RequestSyncCase: Decodable {
+        let encoded: String
+        let p: Int
+        let m: UInt32
+        let data: String
+        let types: UInt64?
+        let since: UInt64?
+        let fragment_ids: String?
+    }
+
+    private struct MeshVectors: Decodable {
+        let packets: [MeshPacketCase]
+        let gcs: [GcsCase]
+        let request_sync: [RequestSyncCase]
+    }
+
+    @Test func rustMeshPacketsVerifyInSwift() throws {
+        guard let vectors = try load("mesh.json", as: MeshVectors.self) else { return }
+        #expect(!vectors.packets.isEmpty)
+        for item in vectors.packets {
+            let wire = try #require(Data(hexString: item.wire))
+            let packet = try #require(BitchatPacket.from(wire), "\(item.name)")
+            let signature = try #require(packet.signature, "\(item.name)")
+            let signingPublic = try #require(Data(hexString: item.signing_public))
+            let key = try Curve25519.Signing.PublicKey(rawRepresentation: signingPublic)
+            let preimage = try #require(packet.toBinaryDataForSigning())
+            #expect(key.isValidSignature(signature, for: preimage), "\(item.name)")
+            let noisePublic = try #require(Data(hexString: item.noise_public))
+            #expect(packet.senderID.hexEncodedString() == PeerID(publicKey: noisePublic).id, "\(item.name)")
+            if let nickname = item.nickname {
+                let announce = try #require(AnnouncementPacket.decode(from: packet.payload), "\(item.name)")
+                #expect(announce.nickname == nickname)
+                #expect(announce.noisePublicKey == noisePublic)
+                #expect(announce.signingPublicKey == signingPublic)
+            }
+        }
+
+        for item in vectors.gcs {
+            let data = item.data.isEmpty ? Data() : try #require(Data(hexString: item.data))
+            let values = GCSFilter.decodeToSortedSet(p: item.p, m: item.m, data: data)
+            #expect(item.included > 0)
+            for idHex in item.ids.prefix(item.included) {
+                let id = try #require(Data(hexString: idHex))
+                let bucket = GCSFilter.bucket(for: id, modulus: item.m)
+                #expect(GCSFilter.contains(sortedValues: values, candidate: bucket))
+            }
+            // Swift builds the same filter from the same IDs.
+            let ids = try item.ids.map { try #require(Data(hexString: $0)) }
+            let swift = GCSFilter.buildFilter(ids: ids, maxBytes: item.max_bytes, targetFpr: 0.01)
+            #expect(swift.p == item.p && swift.m == item.m && swift.includedCount == item.included)
+            #expect(swift.data.hexEncodedString() == item.data)
+        }
+
+        for item in vectors.request_sync {
+            let bytes = try #require(Data(hexString: item.encoded))
+            let request = try #require(RequestSyncPacket.decode(from: bytes))
+            #expect(request.p == item.p)
+            #expect(request.m == item.m)
+            #expect(request.data.hexEncodedString() == item.data)
+            #expect(request.types?.rawValue == item.types)
+            #expect(request.sinceTimestamp == item.since)
+            #expect(request.fragmentIdFilter == item.fragment_ids)
         }
     }
 }

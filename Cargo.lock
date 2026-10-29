@@ -8796,10 +8796,12 @@ dependencies = [
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "bitchat-mesh",
  "bitchat-nostr",
  "bitchat-proto",
  "hex",
  "serde_json",
+ "sha2 0.11.1",
  "tokio",
 ]
 

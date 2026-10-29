@@ -1,3 +1,5 @@
+use bitchat_mesh::MeshIdentity;
+use bitchat_mesh::gcs::{self, RequestSync, SyncTypes};
 use bitchat_nostr::embedded::{self, Addressing, Embedded};
 use bitchat_nostr::event::kind;
 use bitchat_nostr::{Event, Keys, envelope, geo_keys, pow};
@@ -204,6 +206,104 @@ fn export_rust_vectors() {
                 "content": null, "sender": "0101010101010101", "recipient": "0202020202020202" }),
     ];
     write("embedded.json", &Value::Array(embedded_rows));
+
+    export_mesh();
+}
+
+/// Signed mesh packets, GCS filters and sync requests for the Swift verifier.
+fn export_mesh() {
+    let id = MeshIdentity::new([0x24; 32], [0x42; 32]);
+    let ts = 1_790_000_000_000;
+    let long = "mesh message ".repeat(20);
+    let packets = [
+        (
+            "announce",
+            id.announce("rust", &[[1, 2, 3, 4, 5, 6, 7, 8]], 0, ts),
+            Some("rust"),
+        ),
+        (
+            "announce_bare",
+            id.announce("rust", &[], 0, ts),
+            Some("rust"),
+        ),
+        ("message", id.public_message("hello from rust", ts), None),
+        ("message_compressible", id.public_message(&long, ts), None),
+        ("leave", id.leave(ts), None),
+    ];
+    let packet_rows: Vec<Value> = packets
+        .iter()
+        .map(|(name, packet, nickname)| {
+            let packet = packet.as_ref().unwrap();
+            json!({
+                "name": name,
+                "wire": hex::encode(packet.encode(true).unwrap()),
+                "noise_public": hex::encode(id.noise_public()),
+                "signing_public": hex::encode(id.signing_public()),
+                "nickname": nickname,
+            })
+        })
+        .collect();
+
+    let ids = |count: u32, seed: u8| -> Vec<[u8; 16]> {
+        (0..count)
+            .map(|i| {
+                let mut input = vec![seed];
+                input.extend_from_slice(&i.to_be_bytes());
+                gcs_id(&input)
+            })
+            .collect()
+    };
+    let filter_rows: Vec<Value> = [(1, 11, 400), (40, 12, 400), (400, 13, 400), (300, 14, 64)]
+        .iter()
+        .map(|&(count, seed, max_bytes)| {
+            let ids = ids(count, seed);
+            let f = gcs::build_filter(&ids, max_bytes, 0.01);
+            json!({
+                "ids": ids.iter().map(hex::encode).collect::<Vec<_>>(),
+                "max_bytes": max_bytes,
+                "p": f.p, "m": f.m, "data": hex::encode(&f.data), "included": f.included,
+            })
+        })
+        .collect();
+
+    let requests = [
+        RequestSync {
+            p: 7,
+            m: 1,
+            data: vec![],
+            types: None,
+            since: None,
+            fragment_ids: None,
+        },
+        RequestSync {
+            p: 7,
+            m: 4242,
+            data: vec![0xca, 0xfe],
+            types: Some(SyncTypes::from_bits(0b100_0000_0011)),
+            since: Some(1_790_000_000_000),
+            fragment_ids: gcs::encode_fragment_ids(&[[0xab; 8]]),
+        },
+    ];
+    let request_rows: Vec<Value> = requests
+        .iter()
+        .map(|r| {
+            json!({
+                "encoded": hex::encode(r.encode()),
+                "p": r.p, "m": r.m, "data": hex::encode(&r.data),
+                "types": r.types.map(|t| t.bits()), "since": r.since, "fragment_ids": r.fragment_ids,
+            })
+        })
+        .collect();
+
+    write(
+        "mesh.json",
+        &json!({ "packets": packet_rows, "gcs": filter_rows, "request_sync": request_rows }),
+    );
+}
+
+fn gcs_id(input: &[u8]) -> [u8; 16] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(input)[..16].try_into().unwrap()
 }
 
 /// Prints the last hour of a geohash channel straight from its relays (direct, no Tor).

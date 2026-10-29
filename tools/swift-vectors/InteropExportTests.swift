@@ -26,6 +26,8 @@ struct InteropExportTests {
         out["compression"] = compression()
         out["geohash"] = geohash()
         out["noise"] = try noise()
+        out["sync"] = sync()
+        out["mesh_signed"] = try meshSigned()
 
         let folder = URL(fileURLWithPath: dir).appendingPathComponent("swift")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -434,5 +436,164 @@ struct InteropExportTests {
             ["geohash": $0, "valid": Geohash.isValidGeohash($0)] as [String: Any]
         }
         return ["encode": encoded, "decode": decoded, "validity": validity]
+    }
+
+    // MARK: - Gossip sync
+
+    /// 16-byte IDs: SHA256(seed || BE32(i))[0:16].
+    private func syncIDs(_ count: Int, seed: UInt8) -> [Data] {
+        (0..<count).map { i in
+            var input = Data([seed])
+            var be = UInt32(i).bigEndian
+            withUnsafeBytes(of: &be) { input.append(contentsOf: $0) }
+            return Data(SHA256.hash(data: input).prefix(16))
+        }
+    }
+
+    private func sync() -> [String: Any] {
+        let sender = Data(hexString: "0102030405060708")!
+        let idPackets: [BitchatPacket] = [
+            BitchatPacket(type: 0x02, senderID: sender, recipientID: nil, timestamp: 1_790_000_000_123, payload: Data("hi".utf8), signature: nil, ttl: 7),
+            BitchatPacket(type: 0x01, senderID: sender, recipientID: nil, timestamp: 0, payload: Data(), signature: nil, ttl: 7),
+            BitchatPacket(type: 0x20, senderID: sender, recipientID: nil, timestamp: 1 << 40, payload: Data(repeating: 0x5a, count: 300), signature: nil, ttl: 3)
+        ]
+        let packetIDs = idPackets.map { p -> [String: Any] in
+            [
+                "type": Int(p.type),
+                "sender": p.senderID.hexEncodedString(),
+                "timestamp": NSNumber(value: p.timestamp),
+                "payload": p.payload.hexEncodedString(),
+                "id": PacketIdUtil.computeId(p).hexEncodedString()
+            ]
+        }
+
+        struct FilterCase {
+            let count: Int
+            let seed: UInt8
+            let maxBytes: Int
+            let fpr: Double
+            let duplicate: Bool
+        }
+        let filterCases = [
+            FilterCase(count: 0, seed: 1, maxBytes: 400, fpr: 0.01, duplicate: false),
+            FilterCase(count: 1, seed: 1, maxBytes: 400, fpr: 0.01, duplicate: false),
+            FilterCase(count: 8, seed: 2, maxBytes: 1024, fpr: 0.01, duplicate: false),
+            FilterCase(count: 64, seed: 3, maxBytes: 128, fpr: 0.01, duplicate: true),
+            FilterCase(count: 200, seed: 4, maxBytes: 32, fpr: 0.01, duplicate: false),
+            FilterCase(count: 355, seed: 5, maxBytes: 400, fpr: 0.01, duplicate: false),
+            FilterCase(count: 500, seed: 6, maxBytes: 400, fpr: 0.01, duplicate: false),
+            FilterCase(count: 50, seed: 7, maxBytes: 400, fpr: 0.1, duplicate: false),
+            FilterCase(count: 50, seed: 8, maxBytes: 400, fpr: 0.001, duplicate: false),
+            FilterCase(count: 1000, seed: 9, maxBytes: 1024, fpr: 0.01, duplicate: false)
+        ]
+        let filters = filterCases.map { c -> [String: Any] in
+            let ids = c.duplicate
+                ? Array(repeating: syncIDs(1, seed: c.seed)[0], count: c.count)
+                : syncIDs(c.count, seed: c.seed)
+            let params = GCSFilter.buildFilter(ids: ids, maxBytes: c.maxBytes, targetFpr: c.fpr)
+            let decoded = GCSFilter.decodeToSortedSet(p: params.p, m: params.m, data: params.data)
+            let buckets = ids.prefix(5).map { NSNumber(value: GCSFilter.bucket(for: $0, modulus: params.m)) }
+            return [
+                "count": c.count,
+                "seed": Int(c.seed),
+                "duplicate": c.duplicate,
+                "max_bytes": c.maxBytes,
+                "fpr": c.fpr,
+                "p": params.p,
+                "m": NSNumber(value: params.m),
+                "data": params.data.hexEncodedString(),
+                "included": params.includedCount,
+                "decoded": decoded.map { NSNumber(value: $0) },
+                "buckets": buckets
+            ]
+        }
+
+        let fragmentFilter = RequestSyncPacket.encodeFragmentIdFilter([
+            Data(hexString: "0011223344556677")!, Data(hexString: "8899aabbccddeeff")!
+        ])
+        let requests: [(String, RequestSyncPacket)] = [
+            ("minimal", RequestSyncPacket(p: 7, m: 1, data: Data())),
+            ("public", RequestSyncPacket(
+                p: 7, m: 2485, data: Data([0xde, 0xad, 0xbe, 0xef]),
+                types: SyncTypeFlags.publicMessages.union(.groupMessage),
+                sinceTimestamp: 1_790_000_000_000
+            )),
+            ("fragments", RequestSyncPacket(
+                p: 7, m: 100, data: Data([1]), types: .fragment, fragmentIdFilter: fragmentFilter
+            ))
+        ]
+        let requestRows = requests.map { item -> [String: Any] in
+            ["name": item.0, "encoded": item.1.encode().hexEncodedString()]
+        }
+
+        let typeSets: [(String, SyncTypeFlags)] = [
+            ("public", .publicMessages),
+            ("public_group", SyncTypeFlags.publicMessages.union(.groupMessage)),
+            ("fragment", .fragment),
+            ("file", .fileTransfer),
+            ("board", .board),
+            ("prekey", .prekeyBundle),
+            ("all", SyncTypeFlags(messageTypes: [
+                .announce, .message, .leave, .noiseHandshake, .noiseEncrypted, .fragment,
+                .requestSync, .fileTransfer, .boardPost, .prekeyBundle, .groupMessage, .ping, .voiceFrame
+            ])),
+            ("none", SyncTypeFlags(rawValue: 0))
+        ]
+        let typeRows = typeSets.map { item -> [String: Any] in
+            ["name": item.0, "bits": NSNumber(value: item.1.rawValue), "encoded": optionalHex(item.1.toData())]
+        }
+
+        let fprs: [Double] = [0.25, 0.1, 0.05, 0.01, 0.001, 0.0000001]
+        return [
+            "packet_ids": packetIDs,
+            "filters": filters,
+            "requests": requestRows,
+            "types": typeRows,
+            "derive_p": fprs.map { ["fpr": $0, "p": GCSFilter.deriveP(targetFpr: $0)] as [String: Any] }
+        ]
+    }
+
+    // MARK: - Signed mesh packets
+
+    private func meshSigned() throws -> [[String: Any]] {
+        let signing = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x42, count: 32))
+        let noise = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: Data(repeating: 0x24, count: 32))
+        let noisePublic = noise.publicKey.rawRepresentation
+        let signingPublic = signing.publicKey.rawRepresentation
+        let senderID = Data(hexString: PeerID(publicKey: noisePublic).id)!
+        let neighbor = Data(hexString: "0102030405060708")!
+
+        let withCaps = AnnouncementPacket(
+            nickname: "swift", noisePublicKey: noisePublic, signingPublicKey: signingPublic,
+            directNeighbors: [neighbor], capabilities: PeerCapabilities(rawValue: 0)
+        )
+        let bare = AnnouncementPacket(
+            nickname: "swift", noisePublicKey: noisePublic, signingPublicKey: signingPublic,
+            directNeighbors: nil
+        )
+        let longText = Data(String(repeating: "mesh message ", count: 20).utf8)
+        let cases: [(String, UInt8, Data)] = [
+            ("announce", 0x01, withCaps.encode()!),
+            ("announce_bare", 0x01, bare.encode()!),
+            ("message", 0x02, Data("hello from swift".utf8)),
+            ("message_compressible", 0x02, longText),
+            ("leave", 0x03, Data())
+        ]
+        return try cases.map { item -> [String: Any] in
+            var packet = BitchatPacket(
+                type: item.1, senderID: senderID, recipientID: nil,
+                timestamp: 1_790_000_000_000, payload: item.2, signature: nil, ttl: 7
+            )
+            let preimage = packet.toBinaryDataForSigning()!
+            packet.signature = try signing.signature(for: preimage)
+            return [
+                "name": item.0,
+                "noise_public": noisePublic.hexEncodedString(),
+                "signing_public": signingPublic.hexEncodedString(),
+                "payload": item.2.hexEncodedString(),
+                "signing": preimage.hexEncodedString(),
+                "wire": optionalHex(packet.toBinaryData(padding: true))
+            ]
+        }
     }
 }
