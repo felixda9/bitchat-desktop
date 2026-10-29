@@ -82,6 +82,8 @@ struct Participant {
 
 struct Channel {
     geohash: String,
+    /// Typed or picked by hand rather than from the location list.
+    manual: bool,
     teleported: bool,
     keys: Keys,
     replaying: bool,
@@ -326,7 +328,16 @@ impl Engine {
                 .collect(),
         });
         self.subscribe_notes(now_ms);
+        // A channel picked from the location list stops counting as
+        // teleported once we know it is where we are.
+        let regional = self.channel.as_ref().map(|c| self.is_regional(&c.geohash));
+        if let (Some(c), Some(regional)) = (self.channel.as_mut(), regional)
+            && !c.manual
+        {
+            c.teleported = !regional;
+        }
         self.emit_location();
+        self.emit_channel();
         self.emit_settings();
     }
 
@@ -394,6 +405,7 @@ impl Engine {
 
         let mut channel = Channel {
             geohash: gh.clone(),
+            manual,
             teleported,
             keys,
             replaying: true,
@@ -410,6 +422,9 @@ impl Engine {
             },
         );
         self.channel = Some(channel);
+        self.state.last_channel = Some(gh.clone());
+        self.state.last_channel_manual = manual;
+        self.effects.push(Effect::Save);
         self.seen = Seen::default();
         self.ui(UiEvent::ClearTimeline);
         self.emit_channel();
@@ -419,6 +434,8 @@ impl Engine {
 
     pub fn leave_channel(&mut self) {
         if let Some(c) = self.channel.take() {
+            self.state.last_channel = None;
+            self.effects.push(Effect::Save);
             self.effects.push(Effect::Unsubscribe {
                 id: geo_sub(&c.geohash),
             });
@@ -552,10 +569,11 @@ impl Engine {
         if own && now - event.created_at < OWN_ECHO_SECS {
             return;
         }
+        let mut people_changed = false;
         if let Some(n) = event.tag_value("n")
             && (c.nicknames.len() < NICKNAME_CAP || c.nicknames.contains_key(&pk))
         {
-            c.nicknames.insert(pk.clone(), n.to_string());
+            people_changed |= c.nicknames.insert(pk.clone(), n.to_string()).as_deref() != Some(n);
         }
         let seen_at = if c.replaying {
             event.created_at.min(now)
@@ -567,9 +585,17 @@ impl Engine {
             .iter()
             .any(|t| t.len() >= 2 && t[0] == "t" && t[1] == "teleport");
         let p = c.participants.entry(pk.clone()).or_default();
+        let was_visible = now - p.last_seen <= ONLINE_WINDOW_SECS;
+        let was_teleported = p.teleported;
         p.last_seen = p.last_seen.max(seen_at);
         if now - seen_at <= ONLINE_WINDOW_SECS {
             p.teleported = teleported;
+        }
+        people_changed |= (!was_visible && now - p.last_seen <= ONLINE_WINDOW_SECS)
+            || was_teleported != p.teleported;
+        // Update the people list right away, not only on the 30 s refresh.
+        if people_changed {
+            self.emit_people(now);
         }
 
         if event.kind == kind::GEOHASH_PRESENCE {

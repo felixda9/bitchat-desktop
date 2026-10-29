@@ -88,6 +88,11 @@ pub struct State {
     pub bookmarks: Vec<String>,
     /// Blocked Nostr pubkeys (lowercase hex).
     pub blocked: BTreeSet<String>,
+    /// Last joined channel, rejoined at start (wiped with everything else).
+    #[serde(default)]
+    pub last_channel: Option<String>,
+    #[serde(default)]
+    pub last_channel_manual: bool,
 }
 
 pub fn random_nickname() -> String {
@@ -110,6 +115,8 @@ impl State {
             custom_relays: Vec::new(),
             bookmarks: Vec::new(),
             blocked: BTreeSet::new(),
+            last_channel: None,
+            last_channel_manual: false,
         }
     }
 

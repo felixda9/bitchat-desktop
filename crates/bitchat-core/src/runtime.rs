@@ -388,6 +388,11 @@ async fn run(
     runner.emit_tor();
     runner.apply();
     runner.refresh_directory();
+    if let Some(geohash) = runner.engine.state.last_channel.clone() {
+        let manual = runner.engine.state.last_channel_manual;
+        runner.engine.join_channel(&geohash, manual, now_ms());
+        runner.apply();
+    }
 
     let mut acks = tokio::time::interval(ACK_INTERVAL);
     let mut people = tokio::time::interval(PEOPLE_REFRESH);
@@ -406,7 +411,14 @@ async fn run(
         };
         tokio::select! {
             cmd = commands.recv() => match cmd {
-                Some(c) => runner.command(c),
+                Some(c) => {
+                    // iOS sends presence 5 s after a location change.
+                    let located = matches!(c, Command::SetLocation { fix: Some(_) });
+                    runner.command(c);
+                    if located {
+                        presence.as_mut().reset(tokio::time::Instant::now() + Duration::from_secs(5));
+                    }
+                }
                 None => break,
             },
             Some(event) = pool_rx.recv() => {

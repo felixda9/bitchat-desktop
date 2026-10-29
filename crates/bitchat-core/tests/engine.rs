@@ -367,3 +367,27 @@ fn drop_needs_location() {
     );
     assert!(system_lines(&out).contains(&"📍 note left here — it fades in 24h".to_string()));
 }
+
+#[test]
+fn senders_show_up_in_people() {
+    let mut alice = joined("alice");
+    let mut bob = joined("bob");
+    alice.submit("hello", T0 + 1000);
+    deliver(&mut bob, &published(&settle(&mut alice)), T0 + 1500);
+    bob.emit_people(((T0 + 2000) / 1000) as i64);
+    let people = ui(&settle(&mut bob))
+        .into_iter()
+        .find_map(|u| match u {
+            UiEvent::People {
+                people, unknown, ..
+            } => Some((people, unknown)),
+            _ => None,
+        })
+        .unwrap();
+    let names: Vec<_> = people.0.iter().map(|p| (p.display.clone(), p.me)).collect();
+    assert!(!people.1, "{names:?}");
+    assert!(
+        names.iter().any(|(n, me)| n.starts_with("alice#") && !me),
+        "{names:?}"
+    );
+}

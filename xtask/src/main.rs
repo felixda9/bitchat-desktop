@@ -225,7 +225,10 @@ fn geo_watch(geohash: String) {
             Filter::geohash_ephemeral(&geohash, Some(now - 3600), 200),
             &relays,
         );
-        let secs = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(15);
+        let secs = std::env::args()
+            .nth(3)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(15);
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(secs);
         while let Ok(Some(e)) = tokio::time::timeout_at(deadline, rx.recv()).await {
             match e {
