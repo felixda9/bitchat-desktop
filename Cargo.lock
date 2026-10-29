@@ -644,6 +644,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitchat-mesh"
+version = "0.1.0"
+dependencies = [
+ "bitchat-noise",
+ "bitchat-proto",
+ "ed25519-dalek 3.0.0",
+ "hex",
+ "serde_json",
+]
+
+[[package]]
 name = "bitchat-noise"
 version = "0.1.0"
 dependencies = [
@@ -1509,6 +1520,7 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
  "curve25519-dalek-derive",
+ "digest 0.11.3",
  "fiat-crypto 0.3.0",
  "rustc_version",
  "subtle",
@@ -1969,7 +1981,7 @@ dependencies = [
  "digest 0.10.7",
  "elliptic-curve",
  "rfc6979",
- "signature",
+ "signature 2.2.0",
  "spki",
 ]
 
@@ -1980,7 +1992,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
 dependencies = [
  "pkcs8",
- "signature",
+ "signature 2.2.0",
+]
+
+[[package]]
+name = "ed25519"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29fcf32e6c73d1079f83ab4d782de2d81620346a5f38c6237a86a22f8368980a"
+dependencies = [
+ "signature 3.0.0",
 ]
 
 [[package]]
@@ -1990,11 +2011,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
 dependencies = [
  "curve25519-dalek 4.1.3",
- "ed25519",
+ "ed25519 2.2.3",
  "merlin",
  "rand_core 0.6.4",
  "serde",
  "sha2 0.10.9",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "ed25519-dalek"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ebaa1a2bf1290ab3bfe5a7b771d050ebffab2711c19a81691c683a5144a25de"
+dependencies = [
+ "curve25519-dalek 5.0.0",
+ "ed25519 3.0.0",
+ "sha2 0.11.1",
  "subtle",
  "zeroize",
 ]
@@ -5112,7 +5146,7 @@ dependencies = [
  "pkcs8",
  "rand_core 0.6.4",
  "sha2 0.10.9",
- "signature",
+ "signature 2.2.0",
  "spki",
  "subtle",
  "zeroize",
@@ -5689,6 +5723,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "signature"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28d567dcbaf0049cb8ac2608a76cd95ff9e4412e1899d389ee400918ca7537f5"
+
+[[package]]
 name = "simd-adler32"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5861,7 +5901,7 @@ dependencies = [
  "rsa",
  "sec1",
  "sha2 0.10.9",
- "signature",
+ "signature 2.2.0",
  "ssh-cipher",
  "ssh-encoding",
  "subtle",
@@ -6783,7 +6823,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "597f90bef62f70da2e0ba8bff3f6e33b5478636ef8a67e6a1934950c16178a40"
 dependencies = [
  "humantime",
- "signature",
+ "signature 2.2.0",
  "thiserror 2.0.21",
  "tor-llcrypto",
 ]
@@ -6975,7 +7015,7 @@ dependencies = [
  "scopeguard",
  "serde",
  "serde_json",
- "signature",
+ "signature 2.2.0",
  "static_assertions",
  "strum",
  "thiserror 2.0.21",
@@ -7088,7 +7128,7 @@ dependencies = [
  "rand 0.9.5",
  "safelog",
  "serde",
- "signature",
+ "signature 2.2.0",
  "subtle",
  "thiserror 2.0.21",
  "tor-basic-utils",
@@ -7112,7 +7152,7 @@ dependencies = [
  "paste",
  "rand 0.9.5",
  "rsa",
- "signature",
+ "signature 2.2.0",
  "ssh-key",
  "thiserror 2.0.21",
  "tor-bytes",
@@ -7144,7 +7184,7 @@ dependencies = [
  "rand 0.9.5",
  "safelog",
  "serde",
- "signature",
+ "signature 2.2.0",
  "ssh-key",
  "thiserror 2.0.21",
  "tor-basic-utils",
@@ -7203,7 +7243,7 @@ dependencies = [
  "derive-deftly",
  "derive_more",
  "digest 0.10.7",
- "ed25519-dalek",
+ "ed25519-dalek 2.2.0",
  "educe",
  "getrandom 0.3.4",
  "hex",
@@ -7219,7 +7259,7 @@ dependencies = [
  "sha1 0.10.7",
  "sha2 0.10.9",
  "sha3",
- "signature",
+ "signature 2.2.0",
  "subtle",
  "thiserror 2.0.21",
  "tor-error",
@@ -7326,7 +7366,7 @@ dependencies = [
  "saturating-time",
  "serde",
  "serde_with",
- "signature",
+ "signature 2.2.0",
  "smallvec",
  "strum",
  "subtle",

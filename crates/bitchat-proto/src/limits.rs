@@ -28,6 +28,11 @@ const REQUEST_SYNC_BYTES: usize = 8 * 1024;
 const ENVELOPE_BYTES: usize = 64 * 1024;
 const TWICE_V1_FRAME_BYTES: usize = 128 * 1024;
 
+/// Worst-case frame bytes around a payload: v2 header, both IDs, a full
+/// route, the original-size field, a signature and maximum padding (2396).
+pub const MAX_FRAME_OVERHEAD: usize =
+    V2_HEADER_SIZE + ID_SIZE + ID_SIZE + 1 + 255 * ID_SIZE + 4 + SIGNATURE_SIZE + 255;
+
 /// Ceiling on the decoded payload of a packet type, compressed or not.
 pub fn max_payload_bytes(packet_type: u8) -> usize {
     match packet_type {
