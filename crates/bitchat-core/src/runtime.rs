@@ -23,16 +23,35 @@ const DIRECTORY_CACHE: &str = "relays.csv";
 
 #[derive(Clone, Debug)]
 pub enum Command {
-    Join { geohash: String, manual: bool },
+    Join {
+        geohash: String,
+        manual: bool,
+    },
     Leave,
-    Submit { text: String },
-    OpenDm { peer: Option<String> },
-    SetNickname { nickname: String },
-    SetTor { enabled: bool },
-    AddRelay { url: String },
-    RemoveRelay { url: String },
-    SetLocation { fix: Option<(f64, f64)> },
+    Submit {
+        text: String,
+    },
+    OpenDm {
+        peer: Option<String>,
+    },
+    SetNickname {
+        nickname: String,
+    },
+    SetTor {
+        enabled: bool,
+    },
+    AddRelay {
+        url: String,
+    },
+    RemoveRelay {
+        url: String,
+    },
+    SetLocation {
+        fix: Option<(f64, f64)>,
+    },
     Wipe,
+    /// The UI (re)connected: send the full view again.
+    Refresh,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -240,6 +259,10 @@ impl Runner {
             Command::RemoveRelay { url } => self.engine.remove_relay(&url, now),
             Command::SetLocation { fix } => self.engine.set_location(fix, now),
             Command::Wipe => self.wipe(),
+            Command::Refresh => {
+                self.engine.announce(now);
+                self.emit_tor();
+            }
         }
         self.apply();
     }
@@ -263,7 +286,7 @@ impl Runner {
         }
         self.pool.set_dialer(self.dialer());
         (self.sink)(UiEvent::Wiped);
-        self.engine.announce();
+        self.engine.announce(now_ms());
         self.emit_tor();
     }
 
@@ -349,7 +372,7 @@ async fn run(
         runner.start_tor();
     }
     runner.pool.set_dialer(runner.dialer());
-    runner.engine.announce();
+    runner.engine.announce(now_ms());
     runner.emit_tor();
     runner.apply();
     runner.refresh_directory();

@@ -66,6 +66,11 @@ async fn locate(app: State<'_, App>) -> Result<(f64, f64), String> {
 }
 
 #[tauri::command]
+fn refresh(app: State<'_, App>) {
+    send(&app, Command::Refresh);
+}
+
+#[tauri::command]
 fn wipe(app: State<'_, App>) {
     send(&app, Command::Wipe);
 }
@@ -95,6 +100,7 @@ fn main() {
             remove_relay,
             set_location,
             locate,
+            refresh,
             wipe
         ])
         .run(tauri::generate_context!())

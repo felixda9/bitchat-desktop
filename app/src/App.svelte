@@ -16,7 +16,11 @@
   let confirmWipe = $state(false);
 
   onMount(() => {
-    const unlisten = onEvent(handle);
+    // Ask for the full view once listening, so start-up events aren't missed.
+    const unlisten = onEvent(handle).then((stop) => {
+      api.refresh();
+      return stop;
+    });
     return () => {
       unlisten.then((f) => f());
     };

@@ -91,6 +91,7 @@ export const api = {
   removeRelay: (url: string) => invoke("remove_relay", { url }),
   setLocation: (lat: number | null, lon: number | null) => invoke("set_location", { lat, lon }),
   locate: () => invoke<[number, number]>("locate"),
+  refresh: () => invoke("refresh"),
   wipe: () => invoke("wipe"),
 };
 

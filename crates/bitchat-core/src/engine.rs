@@ -249,16 +249,42 @@ impl Engine {
         self.fix.is_some()
     }
 
-    /// Everything the UI needs after start-up or a wipe.
-    pub fn announce(&mut self) {
+    /// Replays the whole view: at start-up, after a wipe, and when the UI
+    /// (re)connects and missed earlier events.
+    pub fn announce(&mut self, now_ms: u64) {
         let keys = self.state.identity.nostr_keys();
         self.ui(UiEvent::Identity {
             nickname: self.state.nickname.clone(),
             npub: keys.npub(),
         });
         self.emit_settings();
+        self.emit_location();
         self.emit_channel();
+        self.ui(UiEvent::ClearTimeline);
+        let timeline: Vec<PublicMessage> = self
+            .channel
+            .iter()
+            .flat_map(|c| c.timeline.iter().cloned())
+            .collect();
+        for message in timeline {
+            self.ui(UiEvent::Public { message });
+        }
+        self.emit_people((now_ms / 1000) as i64);
         self.emit_conversations();
+        if let Some(peer) = self.open_dm.clone() {
+            let messages = self
+                .dms
+                .get(&peer)
+                .map(|c| c.messages.clone())
+                .unwrap_or_default();
+            let display = self.display_for(&peer);
+            self.ui(UiEvent::DmOpened {
+                peer: Some(peer),
+                display,
+                messages,
+            });
+        }
+        self.emit_notes(now_ms);
     }
 
     pub fn emit_settings(&mut self) {
@@ -300,6 +326,11 @@ impl Engine {
                 .collect(),
         });
         self.subscribe_notes(now_ms);
+        self.emit_location();
+        self.emit_settings();
+    }
+
+    fn emit_location(&mut self) {
         // The building level is left out of the picker, as on iOS.
         let channels = self
             .regional_channels()
@@ -311,7 +342,6 @@ impl Engine {
             })
             .collect();
         self.ui(UiEvent::Location { channels });
-        self.emit_settings();
     }
 
     /// Geohashes for the current location, coarsest first.
