@@ -1,0 +1,132 @@
+//! Events sent to the UI.
+
+use serde::Serialize;
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PublicMessage {
+    pub id: String,
+    pub pubkey: String,
+    /// `nick#abcd`
+    pub display: String,
+    pub content: String,
+    /// Unix milliseconds.
+    pub timestamp: u64,
+    pub own: bool,
+    pub teleported: bool,
+    /// A `* … *` hug/slap action, rendered like a system line.
+    pub emote: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Person {
+    pub pubkey: String,
+    pub display: String,
+    pub teleported: bool,
+    pub me: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DmStatus {
+    Sent,
+    Delivered,
+    Read,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DmMessage {
+    pub id: String,
+    pub from_me: bool,
+    pub content: String,
+    pub timestamp: u64,
+    pub status: Option<DmStatus>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ConversationSummary {
+    pub peer: String,
+    pub display: String,
+    pub geohash: String,
+    pub unread: usize,
+    pub last: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Note {
+    pub id: String,
+    pub display: String,
+    pub content: String,
+    pub timestamp: u64,
+    pub own: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum UiEvent {
+    Identity {
+        nickname: String,
+        npub: String,
+    },
+    Channel {
+        geohash: Option<String>,
+        level: Option<String>,
+        teleported: bool,
+    },
+    Public {
+        message: PublicMessage,
+    },
+    /// A local line in the current view (command replies, notices).
+    System {
+        text: String,
+    },
+    People {
+        geohash: String,
+        count: usize,
+        /// High-precision channel with nobody seen: shown as `[? people]`.
+        unknown: bool,
+        people: Vec<Person>,
+    },
+    Conversations {
+        items: Vec<ConversationSummary>,
+    },
+    DmOpened {
+        peer: Option<String>,
+        display: String,
+        messages: Vec<DmMessage>,
+    },
+    Dm {
+        peer: String,
+        message: DmMessage,
+    },
+    DmStatus {
+        peer: String,
+        id: String,
+        status: DmStatus,
+    },
+    ClearTimeline,
+    ClearDm {
+        peer: String,
+    },
+    Notes {
+        geohash: String,
+        notes: Vec<Note>,
+    },
+    Tor {
+        state: String,
+        progress: f32,
+        summary: String,
+    },
+    Relay {
+        url: String,
+        status: String,
+    },
+    Settings {
+        nickname: String,
+        tor_enabled: bool,
+        custom_relays: Vec<String>,
+        key_in_keychain: bool,
+        has_location: bool,
+    },
+    Wiped,
+}

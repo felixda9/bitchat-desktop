@@ -6,3 +6,19 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bitchat-nostr = { version = "0.1.0", path = "../bitchat-nostr", features = ["net"] }
+bitchat-proto = { version = "0.1.0", path = "../bitchat-proto" }
+chacha20poly1305 = "0.11.0"
+directories = "6.0.0"
+getrandom = "0.4.3"
+hex = "0.4.3"
+keyring = "4.2.0"
+log = "0.4.34"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
+unicode-normalization = "0.1.26"
+
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time", "test-util"] }
