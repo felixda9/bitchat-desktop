@@ -1,0 +1,19 @@
+//! Packet type codes (BitFoundation `MessageType`).
+
+pub const ANNOUNCE: u8 = 0x01;
+pub const MESSAGE: u8 = 0x02;
+pub const LEAVE: u8 = 0x03;
+pub const COURIER_ENVELOPE: u8 = 0x04;
+pub const NOISE_HANDSHAKE: u8 = 0x10;
+pub const NOISE_ENCRYPTED: u8 = 0x11;
+pub const FRAGMENT: u8 = 0x20;
+pub const REQUEST_SYNC: u8 = 0x21;
+pub const FILE_TRANSFER: u8 = 0x22;
+pub const BOARD_POST: u8 = 0x23;
+pub const PREKEY_BUNDLE: u8 = 0x24;
+pub const GROUP_MESSAGE: u8 = 0x25;
+pub const PING: u8 = 0x26;
+pub const PONG: u8 = 0x27;
+pub const NOSTR_CARRIER: u8 = 0x28;
+pub const VOICE_FRAME: u8 = 0x29;
+pub const ANNOUNCE_V2: u8 = 0x2C;
