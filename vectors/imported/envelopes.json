@@ -1,0 +1,16 @@
+[
+  {
+    "name": "ios-733098bb",
+    "event_file": "upstream/LegacyPrivateEnvelope733098bb.json",
+    "recipient_private_key": "8355a5c110cdfef2e644f4ad5d51c39f253b2c2c80ebb6856379fb16531dc1fa",
+    "expected_content": "legacy fixture from 733098bb",
+    "expected_sender": "2e3d79df7047204f02b726c574e256f8de1dd80510f7dcb8b0d12df13acb87e6"
+  },
+  {
+    "name": "android-b7f0b33d",
+    "event_file": "upstream/AndroidLegacyPrivateEnvelopeB7f0b33d.json",
+    "recipient_private_key": "0000000000000000000000000000000000000000000000000000000000000002",
+    "expected_content": "legacy fixture from Android b7f0b33d",
+    "expected_sender": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+  }
+]

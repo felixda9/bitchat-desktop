@@ -1,0 +1,107 @@
+{
+  "source": "reference/bitchat-android/app/src/test/kotlin/com/bitchat/android/contracts/ClientRewriteWireContractTest.kt @ 20501fd",
+  "packets": [
+    {
+      "name": "v1 unpadded",
+      "version": 1,
+      "type": 2,
+      "ttl": 7,
+      "timestamp": 72623859790382856,
+      "sender": "1011121314151617",
+      "recipient": null,
+      "route": null,
+      "payload": "aabbcc",
+      "signature": null,
+      "hex": "01020701020304050607080000031011121314151617aabbcc"
+    },
+    {
+      "name": "v2 routed signed",
+      "version": 2,
+      "type": 17,
+      "ttl": 5,
+      "timestamp": 42,
+      "sender": "0102030405060708",
+      "recipient": "1112131415161718",
+      "route": [
+        "2122232425262728",
+        "3132333435363738"
+      ],
+      "payload": "dead",
+      "signature": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+      "hex": "021105000000000000002a0b00000002010203040506070811121314151617180221222324252627283132333435363738dead5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+    }
+  ],
+  "private_message": {
+    "message_id": "m1",
+    "content": "hi",
+    "tlv": "00026d3101026869",
+    "noise_payload": "0100026d3101026869"
+  },
+  "noise_payload_alias": {
+    "input": "09cafe",
+    "reencoded": "20cafe"
+  },
+  "fragment": {
+    "fragment_id": "0001020304050607",
+    "index": 1,
+    "total": 3,
+    "original_type": 2,
+    "data": "aabb",
+    "hex": "00010203040506070001000302aabb"
+  },
+  "request_sync": {
+    "p": 19,
+    "m": 16909060,
+    "data": "aabb",
+    "hex": "0100011302000401020304030002aabb",
+    "hex_with_unknown_prefix": "7f0002cafe0100011302000401020304030002aabb"
+  },
+  "announce": {
+    "nickname": "bob",
+    "noise_public_key": "1111111111111111111111111111111111111111111111111111111111111111",
+    "signing_public_key": "2222222222222222222222222222222222222222222222222222222222222222",
+    "capabilities_hex": "0001",
+    "unknown_tlv": {
+      "type": 127,
+      "value": "cafe"
+    },
+    "hex": "0103626f620220111111111111111111111111111111111111111111111111111111111111111103202222222222222222222222222222222222222222222222222222222222222222050200017f02cafe"
+  },
+  "file": {
+    "file_name": "a",
+    "file_size": 2,
+    "mime_type": "m",
+    "content": "dead",
+    "hex": "01000161020004000000020300016d0400000002dead"
+  },
+  "must_reject": {
+    "private_message": [
+      "00026d31",
+      "00026d3101036869"
+    ],
+    "request_sync": [
+      "0100011302000401020304"
+    ],
+    "announce": [
+      "0103626f62022011"
+    ],
+    "file": [
+      "010001610400000002de"
+    ]
+  },
+  "bech32": {
+    "source": "reference/bitchat-android/app/src/test/java/com/bitchat/android/nostr/Bech32PaddingTest.kt @ 20501fd",
+    "valid": [
+      {
+        "npub": "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqzqujme",
+        "hex": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    ],
+    "invalid": [
+      "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqplkg8xt",
+      "test1q6j8x73",
+      "10a06t8",
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx1e5y3yu"
+    ]
+  }
+}
