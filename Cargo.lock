@@ -608,6 +608,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 
 [[package]]
+name = "bitchat-ble"
+version = "0.1.0"
+dependencies = [
+ "bitchat-proto",
+]
+
+[[package]]
 name = "bitchat-core"
 version = "0.1.0"
 dependencies = [
