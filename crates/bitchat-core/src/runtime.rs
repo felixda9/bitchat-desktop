@@ -424,6 +424,11 @@ async fn run(
             }
             changed = tor_changed => {
                 if changed {
+                    // Mark the new status as seen on the kept receiver; the
+                    // per-iteration clone above starts from its version.
+                    if let Some(rx) = runner.tor_status.as_mut() {
+                        rx.borrow_and_update();
+                    }
                     runner.emit_tor();
                 } else {
                     runner.tor_status = None;

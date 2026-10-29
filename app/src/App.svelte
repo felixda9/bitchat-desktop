@@ -19,6 +19,8 @@
     // Ask for the full view once listening, so start-up events aren't missed.
     const unlisten = onEvent(handle).then((stop) => {
       api.refresh();
+      // Like the phones: find the local channels straight away if allowed.
+      api.locate().catch(() => {});
       return stop;
     });
     return () => {

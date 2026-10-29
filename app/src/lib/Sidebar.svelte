@@ -4,6 +4,21 @@
 </script>
 
 <aside>
+  <h3>channels</h3>
+  <ul>
+    <li><span class="muted" title="the bluetooth mesh chat comes in a later version">#mesh · needs bluetooth</span></li>
+    {#each app.regional as c (c.geohash)}
+      <li>
+        <button class:active={app.channel?.geohash === c.geohash} onclick={() => api.join(c.geohash, false)}>
+          #{c.geohash} <span class="muted">{c.level}</span>
+        </button>
+      </li>
+    {/each}
+  </ul>
+  {#if !app.regional.length}
+    <p class="muted">turn on location for desktop apps in Windows settings to see channels near you, or pick one from the channel menu.</p>
+  {/if}
+
   <h3>people</h3>
   {#if !app.channel}
     <p class="muted">not in a channel</p>
