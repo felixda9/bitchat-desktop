@@ -6,11 +6,16 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+base64 = "0.23.1"
 bech32 = "0.12.0"
 bitchat-proto = { version = "0.1.0", path = "../bitchat-proto" }
+chacha20poly1305 = "0.11.0"
 getrandom = "0.4.3"
 hex = "0.4.3"
+hkdf = "0.13.0"
+hmac = "0.13.0"
 secp256k1 = { version = "0.33.1", features = ["rand", "global-context", "std"], default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
+thiserror = "2.0.21"
