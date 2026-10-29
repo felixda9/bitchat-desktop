@@ -1184,4 +1184,55 @@ impl Engine {
         });
         self.emit_settings();
     }
+
+    pub fn set_tor_enabled(&mut self, enabled: bool) {
+        self.state.tor_enabled = enabled;
+        self.effects.push(Effect::Save);
+        self.emit_settings();
+    }
+
+    /// Adds a hand-picked relay for private messages (at most 8).
+    pub fn add_relay(&mut self, raw: &str, now_ms: u64) {
+        let Some(url) = bitchat_nostr::relay_url::normalize(raw, Some("wss")) else {
+            self.system("that doesn't look like a relay address. try wss://host.");
+            return;
+        };
+        if self.state.dm_relays().contains(&url) {
+            self.system(format!("{url} is already in the list"));
+            return;
+        }
+        if self.state.custom_relays.len() >= crate::state::MAX_CUSTOM_RELAYS {
+            self.system(format!(
+                "at most {} extra relays",
+                crate::state::MAX_CUSTOM_RELAYS
+            ));
+            return;
+        }
+        self.state.custom_relays.push(url);
+        self.relays_changed(now_ms);
+    }
+
+    pub fn remove_relay(&mut self, url: &str, now_ms: u64) {
+        let before = self.state.custom_relays.len();
+        self.state.custom_relays.retain(|r| r != url);
+        if self.state.custom_relays.len() != before {
+            self.relays_changed(now_ms);
+        }
+    }
+
+    fn relays_changed(&mut self, now_ms: u64) {
+        self.effects.push(Effect::Save);
+        if let Some(c) = &self.channel {
+            let now = (now_ms / 1000) as i64;
+            self.effects.push(Effect::Subscribe {
+                id: dm_sub(&c.geohash),
+                filter: Filter::gift_wraps_for(
+                    &c.keys.public_key_hex(),
+                    Some(now - DM_LOOKBACK_SECS),
+                ),
+                relays: self.state.dm_relays(),
+            });
+        }
+        self.emit_settings();
+    }
 }

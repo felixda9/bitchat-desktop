@@ -78,6 +78,11 @@ impl Dialer {
         }
     }
 
+    /// A raw TCP (or Tor) stream to `host:port`, for non-websocket use.
+    pub async fn tcp_stream(&self, host: &str, port: u16) -> Result<Io, ConnectError> {
+        self.tcp(host, port).await
+    }
+
     /// Waits until the dialer can be used (Tor bootstrapped).
     pub async fn ready(&self) {
         if let Dialer::Tor(tor) = self {

@@ -176,6 +176,11 @@ impl Storage {
         if self.dir.exists() {
             for item in std::fs::read_dir(&self.dir)? {
                 let path = item?.path();
+                // Tor's directory cache and guard state stay: the running Tor
+                // client holds them open, and they hold no bitchat identity.
+                if path.file_name().is_some_and(|n| n == "tor") {
+                    continue;
+                }
                 if path.is_dir() {
                     std::fs::remove_dir_all(&path)?;
                 } else {

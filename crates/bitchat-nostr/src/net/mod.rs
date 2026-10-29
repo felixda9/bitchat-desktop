@@ -1,5 +1,6 @@
 //! Relay networking (feature `net`).
 
+pub mod http;
 pub mod pool;
 pub mod relay;
 pub mod tor;
