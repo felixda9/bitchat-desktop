@@ -1,0 +1,46 @@
+name: swift-vectors
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - tools/swift-vectors/**
+      - vectors/rust/**
+      - .github/workflows/swift-vectors.yml
+
+jobs:
+  swift:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: desktop
+
+      - uses: actions/checkout@v7
+        with:
+          repository: permissionlesstech/bitchat
+          ref: 04995f68e470a18d1fc99f86fa326c2a87bab4f2
+          path: upstream
+
+      - name: Add interop tests
+        run: |
+          mkdir -p upstream/bitchatTests/Interop
+          cp desktop/tools/swift-vectors/*.swift upstream/bitchatTests/Interop/
+
+      - name: Build
+        working-directory: upstream
+        run: swift build --build-tests
+
+      - name: Test
+        working-directory: upstream
+        env:
+          BITCHAT_INTEROP_DIR: ${{ github.workspace }}/desktop/vectors
+        run: swift test --skip-build --filter Interop
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: swift-vectors
+          path: desktop/vectors/swift/
+          if-no-files-found: error
