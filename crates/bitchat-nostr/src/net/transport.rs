@@ -1,5 +1,7 @@
-//! Opening relay websockets, directly or (later) through Tor.
+//! Opening relay websockets, directly or through Tor.
 
+use super::tor::Tor;
+use arti_client::{ErrorKind, HasKind};
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,6 +26,8 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub enum Dialer {
     /// Straight to the relay; relays see this device's IP address.
     Direct,
+    /// Through Tor; waits for Tor rather than falling back.
+    Tor(Tor),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -38,6 +42,8 @@ pub enum ConnectError {
     Handshake(String),
     #[error("timed out")]
     Timeout,
+    #[error("tor: {0}")]
+    Tor(String),
 }
 
 impl ConnectError {
@@ -64,6 +70,18 @@ impl Dialer {
                 }
                 Ok(Box::new(TcpStream::connect(&addrs[..]).await?))
             }
+            Dialer::Tor(tor) => match tor.connect(host, port).await {
+                Ok(stream) => Ok(Box::new(stream)),
+                Err(e) if e.kind() == ErrorKind::RemoteHostNotFound => Err(ConnectError::Dns),
+                Err(e) => Err(ConnectError::Tor(e.to_string())),
+            },
+        }
+    }
+
+    /// Waits until the dialer can be used (Tor bootstrapped).
+    pub async fn ready(&self) {
+        if let Dialer::Tor(tor) = self {
+            tor.wait_ready().await;
         }
     }
 }
@@ -101,6 +119,8 @@ pub async fn connect(
         _ => return Err(ConnectError::BadUrl),
     };
 
+    // Waiting for Tor is not part of the connect timeout.
+    dialer.ready().await;
     let attempt = async {
         let tcp = dialer.tcp(&host, port).await?;
         let io: Io = if secure {

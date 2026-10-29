@@ -7,3 +7,7 @@ version = "0.1.0"
 edition = "2024"
 license = "Unlicense"
 repository = "https://github.com/felixda9/bitchat-desktop"
+
+# Crypto and Tor are far too slow unoptimized; keep our own crates debuggable.
+[profile.dev.package."*"]
+opt-level = 2
