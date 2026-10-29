@@ -4,5 +4,6 @@
 pub mod announce;
 pub mod fragment;
 pub mod identity;
+pub mod peers;
 
 pub use identity::{MeshIdentity, verify};
