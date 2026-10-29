@@ -183,6 +183,19 @@ with even Y, then odd Y (because the parity byte of S depends on it). Plaintext 
 - Source routes: forward to the next hop (or the recipient after the last hop) with TTL−1 if
   connected, else flood. Not in the route → first hop. TTL ≤ 1 or packet for us → stop.
 
+### 5.2 Sending on links (`BLEService.broadcastPacket`, `BLEFanoutSelector`)
+- On BLE only 0x10/0x11 are padded; everything else goes out unpadded.
+- Never back out the ingress link (or other links to the same peer). A directed packet takes
+  the recipient's own link if there is one, sends nothing if the only link to it is the ingress,
+  otherwise floods. Broadcast chat traffic (not fragments/announces/sync) goes to a
+  deterministic subset of about log2(n)+1 links, seeded by the packet's duplicate key.
+- Frames over the smallest chosen link's limit are fragmented; chunk = limit − overhead.
+- A reassembled packet is processed with TTL 0 (never relayed); the fragments themselves are.
+- First sync request 1 s after a new direct neighbour; periodic every 30 s (messages every
+  round, fragments every 30 s, files every 60 s), unicast per neighbour or broadcast if alone.
+  Requests are TTL 0 and signed; replies are the original packets with TTL 0 + RSR, accepted
+  only from a neighbour we asked in the last 30 s; ≤ 8 replies per peer per 30 s.
+
 ## 6. Noise (`bitchat/Noise/NoiseProtocol.swift`, `NoiseSessionManager.swift`)
 - `Noise_XX_25519_ChaChaPoly_SHA256`, empty prologue, standard SymmetricState/HKDF/Split.
   ChaCha nonce = 4 zero bytes ‖ LE64 counter (standard).
