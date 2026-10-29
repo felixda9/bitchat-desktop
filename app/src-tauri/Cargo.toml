@@ -12,3 +12,6 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+bitchat-core = { version = "0.1.0", path = "../../crates/bitchat-core" }
+log = "0.4.34"
+env_logger = "0.11.11"

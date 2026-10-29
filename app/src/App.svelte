@@ -1,27 +1,74 @@
 <script lang="ts">
-  let status = "not connected";
+  import { onMount } from "svelte";
+  import { api, onEvent } from "./lib/api";
+  import { handle, app } from "./lib/store.svelte";
+  import Header from "./lib/Header.svelte";
+  import Timeline from "./lib/Timeline.svelte";
+  import DmView from "./lib/DmView.svelte";
+  import Sidebar from "./lib/Sidebar.svelte";
+  import Composer from "./lib/Composer.svelte";
+  import ChannelDialog from "./lib/ChannelDialog.svelte";
+  import SettingsDialog from "./lib/SettingsDialog.svelte";
+  import ConfirmWipe from "./lib/ConfirmWipe.svelte";
+
+  let showChannel = $state(false);
+  let showSettings = $state(false);
+  let confirmWipe = $state(false);
+
+  onMount(() => {
+    const unlisten = onEvent(handle);
+    return () => {
+      unlisten.then((f) => f());
+    };
+  });
+
+  function wipe() {
+    confirmWipe = false;
+    showSettings = false;
+    api.wipe();
+  }
 </script>
 
-<header>
-  <span class="logo">bitchat/</span>
-</header>
-<main>
-  <p class="muted">{status}</p>
-</main>
+<div class="app">
+  <Header onChannel={() => (showChannel = true)} onSettings={() => (showSettings = true)} onWipe={() => (confirmWipe = true)} />
+  <div class="body">
+    <main>
+      {#if app.dm}
+        <DmView />
+      {:else}
+        <Timeline />
+      {/if}
+      <Composer />
+    </main>
+    <Sidebar />
+  </div>
+</div>
+
+{#if showChannel}
+  <ChannelDialog onClose={() => (showChannel = false)} />
+{/if}
+{#if showSettings}
+  <SettingsDialog onClose={() => (showSettings = false)} onWipe={() => (confirmWipe = true)} />
+{/if}
+{#if confirmWipe}
+  <ConfirmWipe onConfirm={wipe} onCancel={() => (confirmWipe = false)} />
+{/if}
 
 <style>
-  header {
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--line);
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
   }
-  .logo {
-    font-weight: 700;
-    color: var(--accent);
+  .body {
+    flex: 1;
+    display: flex;
+    min-height: 0;
   }
   main {
-    padding: 14px;
-  }
-  .muted {
-    color: var(--muted);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
   }
 </style>
