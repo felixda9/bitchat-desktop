@@ -8481,6 +8481,7 @@ dependencies = [
  "bitchat-proto",
  "hex",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

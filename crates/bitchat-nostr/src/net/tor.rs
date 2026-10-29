@@ -6,6 +6,7 @@
 use arti_client::config::TorClientConfigBuilder;
 use arti_client::{DataStream, TorClient};
 use futures_util::StreamExt;
+use futures_util::task::SpawnExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,12 +46,15 @@ pub struct Tor {
 
 impl Tor {
     /// Creates the client and starts bootstrapping in the background.
-    /// Must be called inside a tokio runtime.
+    /// Tor runs on its own runtime and threads, so a busy or stuck Tor can
+    /// never starve the chat engine. Call once per process; must be called
+    /// inside a tokio runtime (for the status watcher).
     pub fn start(state_dir: &Path, cache_dir: &Path) -> Result<Tor, TorError> {
         let config = TorClientConfigBuilder::from_directories(state_dir, cache_dir)
             .build()
             .map_err(|e| TorError::Config(e.to_string()))?;
-        let client = TorClient::builder()
+        let runtime = PreferredRuntime::create().map_err(|e| TorError::Config(e.to_string()))?;
+        let client = TorClient::with_runtime(runtime.clone())
             .config(config)
             .create_unbootstrapped()?;
 
@@ -61,15 +65,17 @@ impl Tor {
 
         let boot = client.clone();
         let boot_tx = tx.clone();
-        tokio::spawn(async move {
-            if let Err(e) = boot.bootstrap().await {
-                log::warn!("tor bootstrap: {e}");
-                let _ = boot_tx.send(TorStatus::Stalled {
-                    progress: 0.0,
-                    summary: e.to_string(),
-                });
-            }
-        });
+        runtime
+            .spawn(async move {
+                if let Err(e) = boot.bootstrap().await {
+                    log::warn!("tor bootstrap: {e}");
+                    let _ = boot_tx.send(TorStatus::Stalled {
+                        progress: 0.0,
+                        summary: e.to_string(),
+                    });
+                }
+            })
+            .map_err(|e| TorError::Config(e.to_string()))?;
 
         let events_client = client.clone();
         tokio::spawn(async move {

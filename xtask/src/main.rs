@@ -9,8 +9,9 @@ fn main() {
     let task = std::env::args().nth(1).unwrap_or_default();
     match task.as_str() {
         "export-rust-vectors" => export_rust_vectors(),
+        "geo-watch" => geo_watch(std::env::args().nth(2).unwrap_or_default()),
         _ => {
-            eprintln!("usage: cargo xtask export-rust-vectors");
+            eprintln!("usage: cargo xtask export-rust-vectors | geo-watch <geohash>");
             std::process::exit(1);
         }
     }
@@ -203,4 +204,41 @@ fn export_rust_vectors() {
                 "content": null, "sender": "0101010101010101", "recipient": "0202020202020202" }),
     ];
     write("embedded.json", &Value::Array(embedded_rows));
+}
+
+/// Prints the last hour of a geohash channel straight from its relays (direct, no Tor).
+fn geo_watch(geohash: String) {
+    use bitchat_nostr::Filter;
+    use bitchat_nostr::net::{Dialer, PoolEvent, RelayPool};
+    use bitchat_nostr::relay_directory::{Directory, RELAYS_PER_CHANNEL};
+    let relays = Directory::bundled().closest_to_geohash(&geohash, RELAYS_PER_CHANNEL);
+    println!("relays for #{geohash}: {relays:?}");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async move {
+        let (pool, mut rx) = RelayPool::spawn(Dialer::Direct);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        pool.subscribe(
+            "watch",
+            Filter::geohash_ephemeral(&geohash, Some(now - 3600), 200),
+            &relays,
+        );
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+        while let Ok(Some(e)) = tokio::time::timeout_at(deadline, rx.recv()).await {
+            match e {
+                PoolEvent::Event { relay, event, .. } => println!(
+                    "{relay}  kind={} age={}s n={:?} {:?}",
+                    event.kind,
+                    now - event.created_at,
+                    event.tag_value("n"),
+                    event.content
+                ),
+                PoolEvent::Status { relay, status } => println!("{relay}: {status:?}"),
+                PoolEvent::Eose { .. } => println!("-- end of stored events"),
+                _ => {}
+            }
+        }
+    });
 }

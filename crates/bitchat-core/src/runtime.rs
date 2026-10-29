@@ -244,7 +244,19 @@ impl Runner {
                 self.engine.join_channel(&geohash, manual, now);
             }
             Command::Leave => self.engine.leave_channel(),
-            Command::Submit { text } => self.engine.submit(&text, now),
+            Command::Submit { text } => {
+                let tor_waiting = self.engine.state.tor_enabled
+                    && self
+                        .tor_status
+                        .as_ref()
+                        .is_none_or(|rx| *rx.borrow() != TorStatus::Ready);
+                if tor_waiting && !text.trim_start().starts_with('/') {
+                    (self.sink)(UiEvent::System {
+                        text: "tor isn't connected yet — this goes out once it is. turn tor off in settings to send directly.".into(),
+                    });
+                }
+                self.engine.submit(&text, now);
+            }
             Command::OpenDm { peer } => self.engine.open_dm(peer.as_deref()),
             Command::SetNickname { nickname } => self.engine.set_nickname(&nickname),
             Command::SetTor { enabled } => {
