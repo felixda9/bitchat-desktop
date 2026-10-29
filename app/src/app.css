@@ -1,0 +1,28 @@
+:root {
+  --bg: #000;
+  --fg: #e6e6e6;
+  --accent: #39d353;
+  --muted: #7a7a7a;
+  --line: #1f1f1f;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #fff;
+    --fg: #111;
+    --accent: #0a7d24;
+    --muted: #666;
+    --line: #e5e5e5;
+    color-scheme: light;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.4 ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", monospace;
+}
