@@ -1,0 +1,188 @@
+[
+  {
+    "event": {
+      "content": "mined from rust",
+      "created_at": 1793294492,
+      "id": "0050dde07da493bc12ac75b58e3d80a1c2db8aec42d37c2bddb7238ff4f49222",
+      "kind": 20000,
+      "pubkey": "b29aa93302be5bb6c203cbd07cbb5b10dbb3cbf6f4c1ba09fd9fb97492fc2690",
+      "sig": "f56c27127b42e1aa3ac197c028426aaf4dc264e6ecf475f0af069989c74eac092f67a64032cab9728eba4c112f1c1f848fc232306d867130e0b305ba10e3bffc",
+      "tags": [
+        [
+          "g",
+          "u4pru"
+        ],
+        [
+          "n",
+          "rustacean"
+        ],
+        [
+          "t",
+          "teleport"
+        ],
+        [
+          "nonce",
+          "db5492a881b354ac",
+          "8"
+        ]
+      ]
+    },
+    "min_pow": 8
+  },
+  {
+    "event": {
+      "content": "",
+      "created_at": 1793294492,
+      "id": "8bca62d531d739ad1bd1db543187d45740908c70a82717ef7102a9a0b86a4795",
+      "kind": 20001,
+      "pubkey": "b29aa93302be5bb6c203cbd07cbb5b10dbb3cbf6f4c1ba09fd9fb97492fc2690",
+      "sig": "873e2def3affbd529e3f96a834e2743e4f4cd5fb0a7f96ec898b7a95b97c7d58dc263194895b99a341ace9005a4d1cbd341bd33bda41fa3e2f8c466c9bef34a1",
+      "tags": [
+        [
+          "g",
+          "u4pru"
+        ]
+      ]
+    }
+  },
+  {
+    "event": {
+      "content": "note from rust",
+      "created_at": 1793294492,
+      "id": "0554ba10e637903433539da06d6336a6c064e5b76ec79124a7c96b9447763590",
+      "kind": 1,
+      "pubkey": "b29aa93302be5bb6c203cbd07cbb5b10dbb3cbf6f4c1ba09fd9fb97492fc2690",
+      "sig": "3bbf12d77b77c763e65d231a07a665774d69ba2ef2bcfdcec18c85b8933f193afb71892107ef21ddd3ecf1eacec3b97f38e691fed170da863962a25dae9d169c",
+      "tags": [
+        [
+          "g",
+          "u4pruydq"
+        ],
+        [
+          "n",
+          "rustacean"
+        ],
+        [
+          "expiration",
+          "1793380892"
+        ],
+        [
+          "t",
+          "urgent"
+        ]
+      ]
+    }
+  },
+  {
+    "event": {
+      "content": "",
+      "created_at": 1793294492,
+      "id": "d703b7cbbaba7a2283f6c1c8bc3ca44b98782c38920fa5940f9b6a84f79b600c",
+      "kind": 5,
+      "pubkey": "b29aa93302be5bb6c203cbd07cbb5b10dbb3cbf6f4c1ba09fd9fb97492fc2690",
+      "sig": "e0dd339cc5fb78945de0135d11d4015f18c6a78e63377eed3add6c7556e83bdfd948720df3fb7a0ae663d9ac8604335f07d8283b0b36cf9fbc99dc25a607ee15",
+      "tags": [
+        [
+          "e",
+          "abababababababababababababababababababababababababababababababab"
+        ]
+      ]
+    }
+  },
+  {
+    "event": {
+      "content": "ctrl\u0001\u001f",
+      "created_at": 1793294492,
+      "id": "5232b450ed86ed599aaf560d45ac16e01014d2646f8c38460e0d88bf0843b9fd",
+      "kind": 20000,
+      "pubkey": "b29aa93302be5bb6c203cbd07cbb5b10dbb3cbf6f4c1ba09fd9fb97492fc2690",
+      "sig": "68d2ce5a3d075374bf783fad74324553c826b1dc8de55b57ecd2b2731b6646e1fd5024c1ee77dc6c4d477ca360698932188c094c1614377d9a40f4d2b81a9458",
+      "tags": [
+        [
+          "g",
+          "u4pru"
+        ]
+      ]
+    }
+  },
+  {
+    "event": {
+      "content": "bs\bff\f",
+      "created_at": 1793294492,
+      "id": "d4efc0654130ba5add783c9a42a167b8f04e8f5e48059dfb4b33608ee14f5e96",
+      "kind": 20000,
+      "pubkey": "b29aa93302be5bb6c203cbd07cbb5b10dbb3cbf6f4c1ba09fd9fb97492fc2690",
+      "sig": "70e1f01c5a7329eeb1ef39af6139eea4c1880d59e0d62a50b6ab37996369d30733a50f606ae74a2203d7e37a1e5658ec7f55e8c4fbacda62262210fb0fa669e2",
+      "tags": [
+        [
+          "g",
+          "u4pru"
+        ]
+      ]
+    }
+  },
+  {
+    "event": {
+      "content": "ls ps ",
+      "created_at": 1793294492,
+      "id": "9d7006342bf5a5804e47096d23584654c62c918fea55e898d3e1fbb5233a136b",
+      "kind": 20000,
+      "pubkey": "b29aa93302be5bb6c203cbd07cbb5b10dbb3cbf6f4c1ba09fd9fb97492fc2690",
+      "sig": "d97ac80372d82b1db29640d36eda64ad4291b1ddcfba43ea1685e6acb283734e8b5c21630869c1ff15ad5b4ea274be7a35df7b4eaf3f68bd1e412d7d30ae122e",
+      "tags": [
+        [
+          "g",
+          "u4pru"
+        ]
+      ]
+    }
+  },
+  {
+    "event": {
+      "content": "emoji 🫂🐟 é 中文",
+      "created_at": 1793294492,
+      "id": "b26732e627fe3e8591658247ccae3e882f9d5691aa3fbc7e09cd8c5f9280368c",
+      "kind": 20000,
+      "pubkey": "b29aa93302be5bb6c203cbd07cbb5b10dbb3cbf6f4c1ba09fd9fb97492fc2690",
+      "sig": "230535156a7cd990843a20a13eddd3cc56b8d5b13ee0e4d473430cba723afa2a4206af0d8e482366847834df097072e1bfea47a55c7dce5c442792d9ebd9391b",
+      "tags": [
+        [
+          "g",
+          "u4pru"
+        ]
+      ]
+    }
+  },
+  {
+    "event": {
+      "content": "quote \" backslash \\ slash /",
+      "created_at": 1793294492,
+      "id": "77483d2be806b2fe6d0bfaeae06100ac9ee65be5280c7ef8cd87cc4149805240",
+      "kind": 20000,
+      "pubkey": "b29aa93302be5bb6c203cbd07cbb5b10dbb3cbf6f4c1ba09fd9fb97492fc2690",
+      "sig": "969ce349b7438485b20c7c0e3093144fd62413bcca64274878ae660059c65ef0f55f7020455f7a369d21f23e0f1b3868a84ad2289b8867397e58db5ccc0ee4da",
+      "tags": [
+        [
+          "g",
+          "u4pru"
+        ]
+      ]
+    }
+  },
+  {
+    "event": {
+      "content": "line\nbreak\r\ttab",
+      "created_at": 1793294492,
+      "id": "bba74191ff51131a307b5b922d2cddb9e1266e0e64ad51b909a407efae35a9f8",
+      "kind": 20000,
+      "pubkey": "b29aa93302be5bb6c203cbd07cbb5b10dbb3cbf6f4c1ba09fd9fb97492fc2690",
+      "sig": "d47817a695cd2db7eca0f68fa31936780fa298637d5bc069e939a2eda241a4c9ca0dfb7e0ebe81981fdde9f618f5e739bf6b72848e73d302ca25677131f6100c",
+      "tags": [
+        [
+          "g",
+          "u4pru"
+        ]
+      ]
+    }
+  }
+]

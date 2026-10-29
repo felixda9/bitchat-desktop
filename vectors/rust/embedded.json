@@ -1,0 +1,42 @@
+[
+  {
+    "content": "geohash dm from rust",
+    "encoded": "bitchat1:AREHAAABoYiuYWAAAD2y9VUPaYj_9gEAJDNGMjUwNEUwLTRGODktMTFEMy05QTBDLTAzMDVFODJDMzMwMQEUZ2VvaGFzaCBkbSBmcm9tIHJ1c3Stra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2trQ",
+    "message_id": "3F2504E0-4F89-11D3-9A0C-0305E82C3301",
+    "payload_type": 1,
+    "recipient": null,
+    "sender": null
+  },
+  {
+    "content": "account dm from rust",
+    "encoded": "bitchat1:AREHAAABoYiuYWABAD0BAQEBAQEBAQICAgICAgICAQAkM0YyNTA0RTAtNEY4OS0xMUQzLTlBMEMtMDMwNUU4MkMzMzAxARRhY2NvdW50IGRtIGZyb20gcnVzdKWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpQ",
+    "message_id": "3F2504E0-4F89-11D3-9A0C-0305E82C3301",
+    "payload_type": 1,
+    "recipient": "0202020202020202",
+    "sender": "0101010101010101"
+  },
+  {
+    "content": null,
+    "encoded": "bitchat1:AREHAAABoYiuYWAAACVsvQWQMiCJ_AMzRjI1MDRFMC00Rjg5LTExRDMtOUEwQy0wMzA1RTgyQzMzMDHFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxQ",
+    "message_id": "3F2504E0-4F89-11D3-9A0C-0305E82C3301",
+    "payload_type": 3,
+    "recipient": null,
+    "sender": null
+  },
+  {
+    "content": "abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc ",
+    "encoded": "bitchat1:AREHAAABoYiuYWAEADMggK02ciLMKAElY2RQMXYzMjUwcTXQNXGzsNQ1NHQx1rV0NHDWNTA2MHW1MHI2NjYwZPyTmJSsMFIxALe3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw",
+    "message_id": "3F2504E0-4F89-11D3-9A0C-0305E82C3301",
+    "payload_type": 1,
+    "recipient": null,
+    "sender": null
+  },
+  {
+    "content": null,
+    "encoded": "bitchat1:AREHAAABoYiuYWABACUBAQEBAQEBAQICAgICAgICAjNGMjUwNEUwLTRGODktMTFEMy05QTBDLTAzMDVFODJDMzMwMb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb29vQ",
+    "message_id": "3F2504E0-4F89-11D3-9A0C-0305E82C3301",
+    "payload_type": 2,
+    "recipient": "0202020202020202",
+    "sender": "0101010101010101"
+  }
+]
