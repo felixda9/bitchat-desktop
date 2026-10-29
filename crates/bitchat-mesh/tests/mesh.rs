@@ -3,7 +3,6 @@ use bitchat_mesh::fragment::{self, Added, FragmentHeader, Reassembler};
 use bitchat_mesh::{MeshIdentity, verify};
 use bitchat_proto::{Packet, message_type as t};
 use serde_json::Value;
-use std::time::{Duration, Instant};
 
 fn read(path: &str) -> Value {
     let full = format!("{}/../../vectors/{path}", env!("CARGO_MANIFEST_DIR"));
@@ -123,7 +122,7 @@ fn fragments_reassemble_in_any_order() {
     );
 
     let mut r = Reassembler::default();
-    let now = Instant::now();
+    let now = 1_000_000u64;
     let mut order: Vec<usize> = (0..parts.len()).rev().collect();
     order.insert(2, order[0]); // a duplicate before the set completes
     let mut done = None;
@@ -141,14 +140,14 @@ fn fragments_reassemble_in_any_order() {
 
     // Stale assemblies expire.
     r.add(FragmentHeader::parse(&parts[0]).unwrap(), now);
-    r.expire(now + Duration::from_secs(31));
+    r.expire(now + 31_000);
     assert_eq!(r.in_flight(), 0);
 }
 
 #[test]
 fn reassembly_rejects_oversize_and_wrong_type() {
     let mut r = Reassembler::default();
-    let now = Instant::now();
+    let now = 1_000_000u64;
     // Announce cap is 4 KiB + overhead.
     let big = FragmentHeader {
         sender: [1; 8],

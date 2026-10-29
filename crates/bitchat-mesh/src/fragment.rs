@@ -6,12 +6,12 @@
 use bitchat_proto::limits;
 use bitchat_proto::{Packet, PeerId, message_type as t};
 use std::collections::{BTreeMap, HashMap};
-use std::time::{Duration, Instant};
 
 pub const DEFAULT_CHUNK: usize = 469;
 pub const MIN_CHUNK: usize = 64;
 pub const MAX_FRAGMENTS: usize = 10_000;
-pub const ASSEMBLY_TIMEOUT: Duration = Duration::from_secs(30);
+/// Assemblies older than this are dropped (ms).
+pub const ASSEMBLY_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_IN_FLIGHT: usize = 128;
 const HEADER: usize = 13;
 
@@ -106,7 +106,7 @@ pub enum Added {
 struct Assembly {
     parts: BTreeMap<u16, Vec<u8>>,
     original_type: u8,
-    started: Instant,
+    started_ms: u64,
 }
 
 #[derive(Default)]
@@ -115,13 +115,13 @@ pub struct Reassembler {
 }
 
 impl Reassembler {
-    pub fn add(&mut self, header: FragmentHeader, now: Instant) -> Added {
+    pub fn add(&mut self, header: FragmentHeader, now_ms: u64) -> Added {
         let key = (header.sender, header.id);
         if !self.assemblies.contains_key(&key) && self.assemblies.len() >= MAX_IN_FLIGHT {
             let oldest = self
                 .assemblies
                 .iter()
-                .min_by_key(|(_, a)| a.started)
+                .min_by_key(|(_, a)| a.started_ms)
                 .map(|(k, _)| *k);
             if let Some(k) = oldest {
                 self.assemblies.remove(&k);
@@ -130,7 +130,7 @@ impl Reassembler {
         let assembly = self.assemblies.entry(key).or_insert_with(|| Assembly {
             parts: BTreeMap::new(),
             original_type: header.original_type,
-            started: now,
+            started_ms: now_ms,
         });
         let held: usize = assembly.parts.values().map(Vec::len).sum();
         let replaced = assembly.parts.get(&header.index).map_or(0, Vec::len);
@@ -158,9 +158,9 @@ impl Reassembler {
     }
 
     /// Drops assemblies older than 30 seconds.
-    pub fn expire(&mut self, now: Instant) {
+    pub fn expire(&mut self, now_ms: u64) {
         self.assemblies
-            .retain(|_, a| now.duration_since(a.started) < ASSEMBLY_TIMEOUT);
+            .retain(|_, a| now_ms.saturating_sub(a.started_ms) < ASSEMBLY_TIMEOUT_MS);
     }
 
     pub fn in_flight(&self) -> usize {
