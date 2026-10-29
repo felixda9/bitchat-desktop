@@ -9,6 +9,7 @@ pub mod keys;
 #[cfg(feature = "net")]
 pub mod net;
 pub mod pow;
+pub mod relay_directory;
 pub mod relay_message;
 pub mod relay_url;
 
