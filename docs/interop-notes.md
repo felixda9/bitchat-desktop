@@ -180,11 +180,23 @@ with even Y, then odd Y (because the parity byte of S depends on it). Plaintext 
   (iOS's window bitmap has a shift bug — implement a correct window with same size/boundary.)
   Maps onto snow's `StatelessTransportState`.
 - Identity binding: SHA256(remote static)[0:8] must equal the header senderID.
-- Tie-break on crossed msg1: lower peer ID (bytewise) keeps initiator; higher yields.
-- msg1 while established = re-handshake; old session kept receive-only until done (20 s).
+- Tie-break on crossed msg1: lower peer ID (bytewise = iOS lowercase-hex string order) keeps
+  initiator; higher yields.
+- "Fresh initiation" = 32 bytes, or anything when no session exists, or > 32 bytes while
+  established. Shorter bytes for an established session are ignored.
+- msg1 while established = re-handshake; old session kept receive-only until done (20 s). If it
+  fails or times out the old keys come back, further msg1s are ignored for 60 s, and (on
+  timeout) sending waits for one recovery handshake of our own.
+- A crossed msg1 that arrives < 1 s after we finished as initiator (we are lower) is ignored;
+  we then re-handshake once after the 1 s.
+- Initiator rekey drops the old session at once (no receive-only copy).
+- Ciphertext with no session triggers a handshake; ciphertext while we wait for msg3 is held
+  (4/peer, 32 total, 20 s) and replayed after.
 - "Rekey" = new XX handshake (age > 21.6 h, idle > 24 h, or ≥ 9e8 messages).
-- Timeouts: initiator 10 s, responder 20 s. Rate limits 10 handshakes/min/peer.
+- Timeouts: initiator 10 s, responder 20 s. Rate limits: handshake messages 10/min/peer,
+  30/min total; incoming ciphertext 100/s/peer, 500/s total.
 - After establishment iOS sends 0x21 authenticatedPeerState, queued payloads, then an announce.
+  Each side echoes the state once after receiving the other's.
 - Inner payload types: 01 PM, 02 read, 03 delivered, 06/07 group, 08 voice, 10/11 verify,
   12 vouch, 20 privateFile (09 alias), 21 authenticatedPeerState
   (`01 [01 len caps] [02 20 ed25519pub]`).
