@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-arti-client = { version = "0.47.0", default-features = false, features = ["tokio", "rustls", "static-sqlite", "compression"], optional = true }
+arti-client = { version = "=0.38.0", default-features = false, features = ["tokio", "rustls", "static-sqlite", "compression"], optional = true }
 base64 = "0.23.1"
 bech32 = "0.12.0"
 bitchat-proto = { version = "0.1.0", path = "../bitchat-proto" }
@@ -26,7 +26,7 @@ thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net", "io-util"], optional = true }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "logging", "tls12"], optional = true }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"], optional = true }
-tor-rtcompat = { version = "0.47.0", default-features = false, features = ["tokio", "rustls"], optional = true }
+tor-rtcompat = { version = "=0.38.0", default-features = false, features = ["tokio", "rustls"], optional = true }
 url = { version = "2.5.8", optional = true }
 webpki-roots = { version = "1.0.11", optional = true }
 

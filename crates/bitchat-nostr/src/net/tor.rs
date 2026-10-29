@@ -78,9 +78,11 @@ impl Tor {
             .build()
             .map_err(|e| TorError::Config(e.to_string()))?;
         let runtime = own_runtime()?;
-        let client = TorClient::with_runtime(runtime.clone())
-            .config(config)
-            .create_unbootstrapped()?;
+        let client = Arc::new(
+            TorClient::with_runtime(runtime.clone())
+                .config(config)
+                .create_unbootstrapped()?,
+        );
 
         let (tx, rx) = watch::channel(TorStatus::Starting {
             progress: 0.0,
