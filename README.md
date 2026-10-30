@@ -2,7 +2,7 @@
 
 Desktop client for [bitchat](https://github.com/permissionlesstech/bitchat) on Windows and Linux.
 
-Work in progress. Location channels and private messages over Nostr work, and so does the Bluetooth mesh (#mesh) with phones nearby.
+Work in progress. Location channels and private messages over Nostr work, and so does the Bluetooth mesh (#mesh) with phones nearby, including the mesh bridge.
 
 ## Build
 

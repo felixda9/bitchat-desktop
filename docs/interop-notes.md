@@ -255,6 +255,24 @@ with even Y, then odd Y (because the parity byte of S depends on it). Plaintext 
   - Windows `GattServiceProvider` works as a peripheral; a backgrounded iPhone found it and
     connected. The phones' write MTUs seen: Android 517, iPhone 527.
 
+## 8a. Mesh bridge and gateway (`BridgeService.swift`, `GatewayService.swift`)
+- Carrier = mesh type 0x28, TLVs `[t][len BE16][v]`: 01 direction (1 toGateway, 2 fromGateway, 3 toBridge,
+  4 fromBridge), 02 geohash (1-12 bytes), 03 signed event JSON (<=16 KiB). Unknown TLVs skipped, trailing
+  bytes reject. Directed carriers (to*) carry a recipient and the Ed25519 packet signature (checked against
+  the sender's announced key, sender may be multi-hop); broadcasts (from*) are unsigned. TTL 7, no padding.
+- Announce: capability bits gateway 1<<2, bridge 1<<7; TLV 0x06 = bridge cell. Advertise gateway while the
+  switch is on, bridge only while on and a cell is known. One switch runs both.
+- Cell = precision 6 from location, else a reachable bridge peer's announced cell. Identity
+  `geo_keys::derive(seed, "bridge|" + cell)`. Subscription id `bridge-rendezvous`: kinds 20000/20001,
+  `#r` = cell + 8 neighbours, since now-900 s, limit 200, closest 5 relays to the cell.
+- Our #mesh message -> kind 20000 `[["r",cell],["n",nick],["m",stableID,senderHex,tsMs]]` (ts = the radio
+  packet's). stableID = first 32 hex of sha256(lower(senderHex)|tsMs|trimmed content); radio rows use the
+  same ID. Presence kind 20001 `[["r",cell]]` every 4 min (>=30 s apart). No relay: toBridge deposit.
+- Bridged rows are keyed by event ID; the `m` tag is only a hint. A radio copy removes earlier bridged rows
+  with that hint. Events +-15 min. Downlink (fromBridge) after 0.2-1.5 s jitter, <=20/min, skipped if
+  the radio copy or another bridge's broadcast was seen. Gateway: current channel relay events -> fromGateway
+  (<=30/min); toGateway deposits need `#g` == carrier geohash. Deposits: 10/min per depositor, queue 20 (5 each).
+
 ## 8. Courier / prekeys (later phase)
 - Seal: `Noise_X_25519_ChaChaPoly_SHA256`, prologue `"bitchat-courier-v1"`; prekey variant
   prologue `"bitchat-prekey-v1" ‖ BE32(prekeyID)`.
