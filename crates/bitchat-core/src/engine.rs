@@ -3,15 +3,18 @@
 //! actions and relay events and carries out the [`Effect`]s it returns.
 //! Behaviour follows the iOS app (see docs/interop-notes.md).
 
+use crate::bridge::{self, Action, Bridge, Ctx, Gateway};
 use crate::limits::{RateLimiter, content_key};
 use crate::model::*;
 use crate::state::{Favorite, State, clean_nickname};
+use bitchat_mesh::announce::caps;
 use bitchat_mesh::node::NodeEvent;
+use bitchat_nostr::bridge::{self as wire, Carrier, Direction};
 use bitchat_nostr::embedded::{self, Addressing, Embedded};
 use bitchat_nostr::envelope;
 use bitchat_nostr::event::kind;
 use bitchat_nostr::keys::npub_decode;
-use bitchat_nostr::net::PoolEvent;
+use bitchat_nostr::net::{PoolEvent, RelayStatus};
 use bitchat_nostr::relay_directory::{Directory, RELAYS_PER_CHANNEL};
 use bitchat_nostr::{Event, Filter, Keys, pow};
 use bitchat_proto::geohash::{self, Level};
@@ -57,9 +60,21 @@ pub enum Effect {
     Mine(MineRequest),
     Ui(UiEvent),
     Save,
-    /// Broadcast a public message on the Bluetooth mesh.
+    /// Broadcast a public message on the Bluetooth mesh, stamped
+    /// `timestamp` (unix ms; the bridge copy refers to it).
     MeshPublic {
         text: String,
+        timestamp: u64,
+    },
+    /// A Nostr carrier: to one peer, or broadcast.
+    MeshCarrier {
+        to: Option<[u8; 8]>,
+        payload: Vec<u8>,
+    },
+    /// Capability bits and bridge cell for our announces.
+    MeshAdvertise {
+        capabilities: u64,
+        cell: Option<String>,
     },
     /// Send a Noise payload (type byte first) to a mesh peer.
     MeshPrivate {
@@ -80,6 +95,10 @@ pub const ACCOUNT_SUB: &str = "acct-dm";
 pub const SAMPLE_PREFIX: &str = "geo-sample-";
 pub const SAMPLE_LOOKBACK_SECS: i64 = 300;
 pub const SAMPLE_LIMIT: u32 = 100;
+/// The mesh-bridge rendezvous subscription.
+pub const BRIDGE_SUB: &str = "bridge-rendezvous";
+/// People across the mesh bridge: `bridge:<per-cell pubkey>`.
+pub const BRIDGE_PREFIX: &str = "bridge:";
 
 pub fn mesh_key(peer: &[u8; 8]) -> String {
     format!("{MESH_PREFIX}{}", hex::encode(peer))
@@ -98,6 +117,8 @@ pub struct MeshPeer {
     pub noise_public: [u8; 32],
     pub nickname: String,
     pub direct: bool,
+    pub capabilities: u64,
+    pub bridge_cell: Option<String>,
 }
 
 /// The #mesh view: its timeline and who is around.
@@ -209,6 +230,12 @@ pub struct Engine {
     effects: Vec<Effect>,
     key_in_keychain: bool,
     mesh: Mesh,
+    bridge: Bridge,
+    gateway: Gateway,
+    /// Relays with a working connection.
+    relays_up: HashSet<String>,
+    /// Channels where we already said a message went via a gateway.
+    gateway_notices: HashSet<String>,
 }
 
 pub fn geo_sub(geohash: &str) -> String {
@@ -265,6 +292,7 @@ pub fn level_name(level: Level) -> &'static str {
 
 impl Engine {
     pub fn new(state: State, key_in_keychain: bool) -> Engine {
+        let bridge_on = state.bridge_enabled;
         Engine {
             state,
             directory: Directory::bundled(),
@@ -284,6 +312,11 @@ impl Engine {
             effects: Vec::new(),
             key_in_keychain,
             mesh: Mesh::default(),
+            // The one bridge switch also runs the gateway (as iOS).
+            bridge: Bridge::new(bridge_on, TIMELINE_CAP),
+            gateway: Gateway::new(bridge_on),
+            relays_up: HashSet::new(),
+            gateway_notices: HashSet::new(),
         }
         .with_mesh_identity()
     }
@@ -370,6 +403,9 @@ impl Engine {
             custom_relays: self.state.custom_relays.clone(),
             key_in_keychain: self.key_in_keychain,
             has_location: self.fix.is_some(),
+            bridge_enabled: self.bridge.enabled(),
+            bridge_cell: self.bridge.active_cell().map(str::to_string),
+            nearby_only: self.bridge.nearby_only,
         };
         self.ui(event);
     }
@@ -422,6 +458,8 @@ impl Engine {
         self.emit_channel();
         self.emit_settings();
         self.update_sampling(now_ms);
+        // The neighbourhood cell is the bridge's rendezvous.
+        self.bridged(now_ms, |b, _, ctx| b.refresh(ctx));
     }
 
     /// Keeps one counting subscription per channel in the location list.
@@ -663,6 +701,7 @@ impl Engine {
                 teleported: p.teleported,
                 me: *pk == me,
                 favorite: false,
+                bridged: false,
             })
             .collect();
         // Nearby first, then teleported, alphabetical within each.
@@ -717,6 +756,10 @@ impl Engine {
                     self.on_sample(&gh, event, now_ms);
                     return;
                 }
+                if subscription == BRIDGE_SUB {
+                    self.bridged(now_ms, |b, _, ctx| b.on_rendezvous_event(event, ctx));
+                    return;
+                }
                 let Some(gh) = self.current_geohash().map(str::to_string) else {
                     if subscription == NOTES_SUB {
                         self.on_note(event, now_ms);
@@ -724,7 +767,13 @@ impl Engine {
                     return;
                 };
                 if subscription == geo_sub(&gh) {
+                    // Gateway: carry the channel onto the mesh for phones
+                    // without internet.
+                    let copy = self.gateway.enabled().then(|| event.clone());
                     self.on_geo_event(event, now_ms);
+                    if let Some(event) = copy {
+                        self.bridged(now_ms, |_, g, ctx| g.rebroadcast(&event, &gh, ctx));
+                    }
                 } else if subscription == dm_sub(&gh) {
                     self.on_gift_wrap(event, now_ms);
                 } else if subscription == NOTES_SUB {
@@ -739,6 +788,19 @@ impl Engine {
                 }
             }
             PoolEvent::Status { relay, status } => {
+                let was_up = !self.relays_up.is_empty();
+                if status == RelayStatus::Connected {
+                    self.relays_up.insert(relay.clone());
+                } else {
+                    self.relays_up.remove(&relay);
+                }
+                if !was_up && !self.relays_up.is_empty() {
+                    self.bridged(now_ms, |b, g, ctx| {
+                        g.flush(ctx);
+                        b.flush(ctx);
+                        b.publish_presence(ctx);
+                    });
+                }
                 self.ui(UiEvent::Relay {
                     url: relay,
                     status: format!("{status:?}").to_lowercase(),
@@ -840,6 +902,7 @@ impl Engine {
             own,
             teleported,
             emote: is_emote(&content),
+            bridged: false,
         };
         self.push_timeline(message);
     }
@@ -1073,12 +1136,19 @@ impl Engine {
             .closest_to_geohash(&p.geohash, RELAYS_PER_CHANNEL);
         if relays.is_empty() {
             self.system("no geo relays for this channel; not sent");
-            return;
+        } else {
+            self.effects.push(Effect::Publish {
+                event: event.clone(),
+                relays,
+            });
         }
-        self.effects.push(Effect::Publish {
-            event: event.clone(),
-            relays,
-        });
+        // No relay reachable: a gateway peer on the mesh can publish it.
+        let geohash = p.geohash.clone();
+        let now_ms = (p.created_at.max(0) as u64) * 1000;
+        let via_mesh = self.bridged(now_ms, |_, g, ctx| g.uplink(&event, &geohash, ctx));
+        if via_mesh && self.gateway_notices.insert(geohash) {
+            self.system("sent via mesh gateway");
+        }
         let on_channel = self.current_geohash() == Some(p.geohash.as_str());
         if !on_channel {
             return;
@@ -1096,12 +1166,22 @@ impl Engine {
                 own: true,
                 teleported,
                 emote: is_emote(&p.content),
+                bridged: false,
             });
         }
     }
 
     pub fn open_dm(&mut self, peer: Option<&str>) {
         let peer = peer.map(str::to_lowercase);
+        if peer
+            .as_deref()
+            .is_some_and(|p| p.starts_with(BRIDGE_PREFIX))
+        {
+            self.system(
+                "people across the bridge can't get private messages (yet) — talk in #mesh",
+            );
+            return;
+        }
         self.open_dm = peer.clone();
         let Some(peer) = peer else {
             self.ui(UiEvent::DmOpened {
@@ -1175,6 +1255,12 @@ impl Engine {
     }
 
     pub fn send_dm(&mut self, peer: &str, text: &str, now_ms: u64) {
+        if peer.starts_with(BRIDGE_PREFIX) {
+            self.system(
+                "people across the bridge can't get private messages (yet) — talk in #mesh",
+            );
+            return;
+        }
         if let Some(id) = mesh_peer_id(&peer.to_lowercase()) {
             self.send_mesh_dm(id, text, now_ms);
             return;
@@ -1386,6 +1472,7 @@ impl Engine {
                 // Heard through other devices rather than directly.
                 teleported: !p.direct,
                 me: false,
+                bridged: false,
             })
             .collect();
         let me = self.mesh.me.clone();
@@ -1395,12 +1482,29 @@ impl Engine {
             teleported: false,
             me: true,
             favorite: false,
+            bridged: false,
         });
         people.sort_by(|a, b| {
             a.teleported
                 .cmp(&b.teleported)
                 .then_with(|| a.display.cmp(&b.display))
         });
+        // Across the bridge: same place, beyond radio range (newest first).
+        people.extend(
+            self.bridge
+                .people()
+                .iter()
+                .map(|p| (format!("{BRIDGE_PREFIX}{}", p.pubkey), p))
+                .filter(|(k, _)| !self.state.blocked.contains(k))
+                .map(|(k, p)| Person {
+                    pubkey: k,
+                    display: p.display(),
+                    teleported: false,
+                    me: false,
+                    favorite: false,
+                    bridged: true,
+                }),
+        );
         people
     }
 
@@ -1413,6 +1517,10 @@ impl Engine {
             return;
         }
         self.mesh.peers = peers;
+        // A bridge peer's announced cell lets us join without a location.
+        if self.bridge.enabled() && self.bridge.active_cell().is_none() {
+            self.bridged(now_ms, |b, _, ctx| b.refresh(ctx));
+        }
         if self.mesh.active {
             self.emit_people((now_ms / 1000) as i64);
         }
@@ -1436,11 +1544,13 @@ impl Engine {
         }
         self.effects.push(Effect::MeshPublic {
             text: text.to_string(),
+            timestamp: now_ms,
         });
+        let my_hex = hex::encode(self.my_mesh_id());
         if echo {
             let me = self.mesh.me.clone();
             self.push_mesh_timeline(PublicMessage {
-                id: format!("{me}-{now_ms}"),
+                id: wire::stable_id(&my_hex, now_ms, text),
                 display: self.display_for(&me),
                 pubkey: me,
                 content: text.to_string(),
@@ -1448,8 +1558,10 @@ impl Engine {
                 own: true,
                 teleported: false,
                 emote: is_emote(text),
+                bridged: false,
             });
         }
+        self.bridged(now_ms, |b, _, ctx| b.outgoing(text, &my_hex, now_ms, ctx));
     }
 
     fn push_mesh_timeline(&mut self, message: PublicMessage) {
@@ -1559,12 +1671,18 @@ impl Engine {
                 timestamp,
             } => {
                 let key = mesh_key(&sender);
-                if self.state.blocked.contains(&key) {
+                // The ID every device derives for this radio message; a
+                // bridged copy of it gives way.
+                let id = wire::stable_id(&hex::encode(sender), timestamp, &text);
+                self.bridged(now_ms, |b, _, ctx| b.on_radio_message(&id, ctx));
+                if self.state.blocked.contains(&key)
+                    || self.mesh.timeline.iter().any(|m| m.id == id)
+                {
                     return;
                 }
                 self.mesh.names.insert(key.clone(), nickname.clone());
                 self.push_mesh_timeline(PublicMessage {
-                    id: format!("{key}-{timestamp}"),
+                    id,
                     display: display_name(Some(&nickname), &hex::encode(sender)),
                     pubkey: key,
                     emote: is_emote(&text),
@@ -1573,6 +1691,24 @@ impl Engine {
                     timestamp: timestamp.min(now_ms),
                     own: false,
                     teleported: false,
+                    bridged: false,
+                });
+            }
+            NodeEvent::Carrier {
+                from,
+                payload,
+                directed,
+            } => {
+                let Some(carrier) = Carrier::decode(&payload) else {
+                    return;
+                };
+                self.bridged(now_ms, |b, g, ctx| match carrier.direction {
+                    Direction::ToGateway | Direction::FromGateway => {
+                        g.on_carrier(&carrier, from, directed, ctx)
+                    }
+                    Direction::ToBridge | Direction::FromBridge => {
+                        b.on_carrier(&carrier, from, directed, ctx)
+                    }
                 });
             }
             NodeEvent::Private { from, plaintext } => {
@@ -1656,6 +1792,178 @@ impl Engine {
                 self.update_status(&peer, &id, status);
             }
             _ => {}
+        }
+    }
+
+    // ---- mesh bridge and gateway (iOS BridgeService, GatewayService) ----
+
+    /// Runs `f` on the bridge and gateway with a snapshot of the app, then
+    /// carries out what they asked for.
+    fn bridged<R>(
+        &mut self,
+        now_ms: u64,
+        f: impl FnOnce(&mut Bridge, &mut Gateway, &Ctx) -> R,
+    ) -> R {
+        let peers = &self.mesh.peers;
+        let with = |bit: u64| -> Vec<[u8; 8]> {
+            peers
+                .iter()
+                .filter(|p| p.capabilities & bit != 0)
+                .map(|p| p.id)
+                .collect()
+        };
+        let timeline = &self.mesh.timeline;
+        let in_timeline = |id: &str| timeline.iter().any(|m| m.id == id);
+        let ctx = Ctx {
+            now_ms,
+            relays_connected: !self.relays_up.is_empty(),
+            location_cell: self
+                .fix
+                .as_ref()
+                .and_then(|f| f.regional.get(&bridge::CELL_PRECISION).cloned()),
+            advertised_cell: peers
+                .iter()
+                .filter(|p| p.capabilities & caps::BRIDGE != 0)
+                .find_map(|p| p.bridge_cell.clone()),
+            bridge_peers: with(caps::BRIDGE),
+            gateway_peers: with(caps::GATEWAY),
+            current_geohash: self.channel.as_ref().map(|c| c.geohash.clone()),
+            seed: self.state.identity.device_seed,
+            nickname: self.state.nickname.clone(),
+            in_timeline: &in_timeline,
+        };
+        let result = f(&mut self.bridge, &mut self.gateway, &ctx);
+        let mut actions = self.bridge.take();
+        actions.extend(self.gateway.take());
+        self.apply_bridge(actions, now_ms);
+        result
+    }
+
+    fn apply_bridge(&mut self, actions: Vec<Action>, now_ms: u64) {
+        for action in actions {
+            match action {
+                Action::Publish { event, geohash } => {
+                    let relays = self
+                        .directory
+                        .closest_to_geohash(&geohash, RELAYS_PER_CHANNEL);
+                    if relays.is_empty() {
+                        log::warn!("bridge: no geo relays for {geohash}; not publishing");
+                        continue;
+                    }
+                    self.effects.push(Effect::Publish { event, relays });
+                }
+                Action::Subscribe { cells } => {
+                    let mut relays = self
+                        .directory
+                        .closest_to_geohash(&cells[0], RELAYS_PER_CHANNEL);
+                    if relays.is_empty() {
+                        relays = self.state.dm_relays();
+                    }
+                    let since = (now_ms / 1000) as i64 - bridge::MAX_EVENT_AGE_SECS;
+                    self.effects.push(Effect::Subscribe {
+                        id: BRIDGE_SUB.into(),
+                        filter: Filter::bridge_rendezvous(
+                            &cells,
+                            Some(since),
+                            bridge::RENDEZVOUS_LIMIT,
+                        ),
+                        relays,
+                    });
+                }
+                Action::Unsubscribe => self.effects.push(Effect::Unsubscribe {
+                    id: BRIDGE_SUB.into(),
+                }),
+                Action::SendCarrier { to, payload } => self.effects.push(Effect::MeshCarrier {
+                    to: Some(to),
+                    payload,
+                }),
+                Action::BroadcastCarrier { payload } => {
+                    self.effects.push(Effect::MeshCarrier { to: None, payload })
+                }
+                Action::Inject(m) => {
+                    let key = format!("{BRIDGE_PREFIX}{}", m.pubkey);
+                    if self.state.blocked.contains(&key)
+                        || self.mesh.timeline.iter().any(|r| r.id == m.id)
+                    {
+                        continue;
+                    }
+                    self.push_mesh_timeline(PublicMessage {
+                        id: m.id,
+                        pubkey: key,
+                        display: m.display,
+                        emote: is_emote(&m.content),
+                        content: m.content,
+                        timestamp: m.timestamp_ms.min(now_ms),
+                        own: false,
+                        teleported: false,
+                        bridged: true,
+                    });
+                }
+                Action::Remove { id } => {
+                    let before = self.mesh.timeline.len();
+                    self.mesh.timeline.retain(|m| m.id != id);
+                    if self.mesh.timeline.len() != before && self.mesh.active {
+                        self.ui(UiEvent::RemovePublic { id });
+                    }
+                }
+                Action::InjectGeo(event) => self.on_geo_event(event, now_ms),
+                Action::Advertise => {
+                    let cell = self.bridge.advertised_cell().map(str::to_string);
+                    let mut capabilities = 0;
+                    if self.gateway.enabled() {
+                        capabilities |= caps::GATEWAY;
+                    }
+                    if cell.is_some() {
+                        capabilities |= caps::BRIDGE;
+                    }
+                    self.effects
+                        .push(Effect::MeshAdvertise { capabilities, cell });
+                    self.emit_settings();
+                }
+                Action::People => {
+                    if self.mesh.active {
+                        self.emit_people((now_ms / 1000) as i64);
+                    }
+                }
+            }
+        }
+    }
+
+    /// At start-up: resume the bridge if it was left on.
+    pub fn start_bridge(&mut self, now_ms: u64) {
+        if self.bridge.enabled() {
+            self.bridged(now_ms, |b, _, ctx| b.refresh(ctx));
+            self.apply_bridge(vec![Action::Advertise], now_ms);
+        }
+    }
+
+    /// The "mesh bridge" switch; it also runs the location-channel gateway.
+    pub fn set_bridge(&mut self, enabled: bool, now_ms: u64) {
+        self.state.bridge_enabled = enabled;
+        self.effects.push(Effect::Save);
+        self.bridged(now_ms, |b, g, ctx| {
+            b.set_enabled(enabled, ctx);
+            g.set_enabled(enabled);
+        });
+        if enabled && self.fix.is_none() && self.bridge.active_cell().is_none() {
+            self.system("the mesh bridge needs your location (settings) or a bridge nearby to find its cell");
+        }
+        self.emit_settings();
+    }
+
+    /// "Nearby only": our #mesh messages stay on the radio this session.
+    pub fn set_nearby_only(&mut self, on: bool) {
+        self.bridge.nearby_only = on;
+        self.emit_settings();
+    }
+
+    /// Bridge and gateway timers; cheap when nothing is due.
+    pub fn bridge_tick(&mut self, now_ms: u64) {
+        if self.bridge.due(now_ms) || self.gateway.due(now_ms) {
+            self.bridged(now_ms, |b, g, ctx| {
+                b.tick(ctx);
+                g.tick(ctx);
+            });
         }
     }
 

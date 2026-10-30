@@ -74,6 +74,17 @@
     />
     {#if app.dm && !text.startsWith("/")}
       <span class="count" class:over={tooLong}>{bytes}/255</span>
+    {:else if !app.dm && app.channel?.geohash === "mesh" && app.settings.bridge_enabled}
+      <button
+        class="scope"
+        class:nearby={app.settings.nearby_only}
+        onclick={() => api.setNearbyOnly(!app.settings.nearby_only)}
+        title={app.settings.nearby_only
+          ? "nearby only — this message won't cross the bridge"
+          : "bridged — reaches people beyond bluetooth range in this area"}
+      >
+        {app.settings.nearby_only ? "📡 nearby only" : "🌐 bridged"}
+      </button>
     {/if}
   </div>
 </div>
@@ -104,6 +115,19 @@
   .count {
     color: var(--muted);
     font-size: 12px;
+  }
+  .scope {
+    background: none;
+    border: 1px solid var(--line);
+    color: var(--accent);
+    font: inherit;
+    font-size: 12px;
+    padding: 2px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .scope.nearby {
+    color: var(--muted);
   }
   .count.over {
     color: var(--warn);

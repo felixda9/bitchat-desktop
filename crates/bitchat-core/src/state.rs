@@ -110,6 +110,9 @@ pub struct State {
     pub last_channel_manual: bool,
     #[serde(default)]
     pub favorites: Vec<Favorite>,
+    /// Mesh bridge (and gateway) switch; off by default, as on iOS.
+    #[serde(default)]
+    pub bridge_enabled: bool,
 }
 
 pub fn random_nickname() -> String {
@@ -135,6 +138,7 @@ impl State {
             last_channel: None,
             last_channel_manual: false,
             favorites: Vec::new(),
+            bridge_enabled: false,
         }
     }
 

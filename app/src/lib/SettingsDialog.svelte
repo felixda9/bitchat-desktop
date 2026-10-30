@@ -10,6 +10,12 @@
     if (nickname.trim() && nickname.trim() !== app.nickname) api.setNickname(nickname);
   }
 
+  function setBridge(on: boolean) {
+    api.setBridge(on);
+    // Turning it on is the moment to look for a location fix (as iOS).
+    if (on && !app.settings.has_location) api.locate().catch(() => {});
+  }
+
   function addRelay() {
     if (relay.trim()) api.addRelay(relay.trim());
     relay = "";
@@ -36,6 +42,23 @@
     <p class="muted">{app.tor.summary}</p>
     {#if !app.settings.tor_enabled}
       <p class="warn">tor is off: every relay, including the ones carrying your private messages, sees your IP address.</p>
+    {/if}
+
+    <label class="check">
+      <input type="checkbox" checked={app.settings.bridge_enabled} onchange={(e) => setBridge(e.currentTarget.checked)} />
+      mesh bridge
+    </label>
+    <p class="muted">
+      joins nearby mesh islands over the internet: what you say in #mesh also reaches people in your area beyond
+      bluetooth range, and their messages show up marked with 🌐. while you have internet, this computer also carries
+      bridge and location-channel traffic for phones around you that have none.
+    </p>
+    {#if app.settings.bridge_enabled}
+      <p class="muted">
+        {app.settings.bridge_cell
+          ? `rendezvous cell: ${app.settings.bridge_cell}`
+          : "no rendezvous cell yet — needs location access or a nearby bridge peer"}
+      </p>
     {/if}
 
     <label for="relay">extra relays for private messages</label>

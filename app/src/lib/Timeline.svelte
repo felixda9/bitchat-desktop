@@ -9,8 +9,8 @@
     queueMicrotask(() => box && (box.scrollTop = box.scrollHeight));
   });
 
-  function openDm(pubkey: string, own: boolean) {
-    if (!own) api.openDm(pubkey);
+  function openDm(pubkey: string, own: boolean, bridged: boolean) {
+    if (!own && !bridged) api.openDm(pubkey);
   }
 </script>
 
@@ -26,7 +26,13 @@
     {:else}
       <p class:own={line.message.own}>
         <span class="time">[{time(line.message.timestamp)}]</span>
-        <button class="nick" style:color={colorFor(line.message.pubkey)} onclick={() => openDm(line.message.pubkey, line.message.own)}>
+        {#if line.message.bridged}<span class="bridged" title="arrived across a mesh bridge">🌐</span>{/if}
+        <button
+          class="nick"
+          class:plain={line.message.bridged}
+          style:color={colorFor(line.message.pubkey)}
+          onclick={() => openDm(line.message.pubkey, line.message.own, line.message.bridged)}
+        >
           &lt;{line.message.display}{#if line.message.teleported}↗{/if}&gt;
         </button>
         <span class="text">{line.message.content}</span>
@@ -55,6 +61,12 @@
     padding: 0;
     font: inherit;
     cursor: pointer;
+  }
+  .nick.plain {
+    cursor: default;
+  }
+  .bridged {
+    font-size: 11px;
   }
   .own .text {
     color: var(--fg-strong);

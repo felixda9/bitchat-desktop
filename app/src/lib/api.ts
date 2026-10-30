@@ -10,6 +10,8 @@ export interface PublicMessage {
   own: boolean;
   teleported: boolean;
   emote: boolean;
+  /** Arrived across the mesh bridge. */
+  bridged: boolean;
 }
 
 export interface Person {
@@ -18,6 +20,8 @@ export interface Person {
   teleported: boolean;
   me: boolean;
   favorite: boolean;
+  /** Across the mesh bridge (no DMs). */
+  bridged: boolean;
 }
 
 export interface FavoriteSummary {
@@ -87,7 +91,11 @@ export type UiEvent =
       custom_relays: string[];
       key_in_keychain: boolean;
       has_location: boolean;
+      bridge_enabled: boolean;
+      bridge_cell: string | null;
+      nearby_only: boolean;
     }
+  | { type: "remove_public"; id: string }
   | { type: "wiped" };
 
 export function onEvent(handler: (e: UiEvent) => void): Promise<UnlistenFn> {
@@ -108,6 +116,8 @@ export const api = {
   refresh: () => invoke("refresh"),
   wipe: () => invoke("wipe"),
   favorite: (peer: string, on: boolean) => invoke("favorite", { peer, on }),
+  setBridge: (enabled: boolean) => invoke("set_bridge", { enabled }),
+  setNearbyOnly: (on: boolean) => invoke("set_nearby_only", { on }),
 };
 
 const GEOHASH = /^[0-9bcdefghjkmnpqrstuvwxyz]{1,12}$/;

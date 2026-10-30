@@ -52,7 +52,7 @@
     <p class="muted">{app.people.unknown ? "nobody seen yet (people here may just be lurking)" : "nobody else here"}</p>
   {/if}
   <ul>
-    {#each app.people.list as p (p.pubkey)}
+    {#each app.people.list.filter((p) => !p.bridged) as p (p.pubkey)}
       <li>
         <button disabled={p.me} style:color={colorFor(p.pubkey)} onclick={() => api.openDm(p.pubkey)}>
           {#if p.favorite}★ {/if}{p.display}{#if p.me} (you){/if}{#if p.teleported} ↗{/if}
@@ -60,6 +60,14 @@
       </li>
     {/each}
   </ul>
+  {#if app.people.list.some((p) => p.bridged)}
+    <h3>🌐 across the bridge</h3>
+    <ul>
+      {#each app.people.list.filter((p) => p.bridged) as p (p.pubkey)}
+        <li><span class="plain" style:color={colorFor(p.pubkey)} title="in your area, connected through the bridge">{p.display}</span></li>
+      {/each}
+    </ul>
+  {/if}
 
   {#if app.favorites.length}
     <h3>favorites</h3>
@@ -137,6 +145,10 @@
   }
   button.active {
     text-decoration: underline;
+  }
+  .plain {
+    display: block;
+    padding: 2px 0;
   }
   button.offline {
     opacity: 0.75;

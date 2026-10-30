@@ -64,6 +64,14 @@ pub enum Command {
         peer: String,
         on: bool,
     },
+    /// The mesh bridge switch (also runs the gateway).
+    SetBridge {
+        enabled: bool,
+    },
+    /// Keep our #mesh messages off the bridge this session.
+    SetNearbyOnly {
+        on: bool,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -246,8 +254,16 @@ impl Runner {
                         log::error!("saving state failed: {e}");
                     }
                 }
-                Effect::MeshPublic { text } => {
-                    let out = self.mesh.send_public(&text, now_ms());
+                Effect::MeshPublic { text, timestamp } => {
+                    let out = self.mesh.send_public(&text, timestamp);
+                    self.apply_mesh(out);
+                }
+                Effect::MeshCarrier { to, payload } => {
+                    let out = self.mesh.send_carrier(to, payload, now_ms());
+                    self.apply_mesh(out);
+                }
+                Effect::MeshAdvertise { capabilities, cell } => {
+                    let out = self.mesh.set_advertisement(capabilities, cell, now_ms());
                     self.apply_mesh(out);
                 }
                 Effect::MeshPrivate { peer, payload } => {
@@ -298,6 +314,8 @@ impl Runner {
                 noise_public: p.noise_public,
                 nickname: p.nickname.clone(),
                 direct: p.direct,
+                capabilities: p.capabilities,
+                bridge_cell: p.bridge_geohash.clone(),
             })
             .collect();
         self.engine.set_mesh_peers(peers, now_ms());
@@ -351,6 +369,7 @@ impl Runner {
     fn mesh_tick(&mut self) {
         let out = self.mesh.tick(now_ms());
         self.apply_mesh(out);
+        self.engine.bridge_tick(now_ms());
         self.mesh_ticks += 1;
         // Nicknames change without an event; look about once a second.
         if self.mesh_ticks.is_multiple_of(20) {
@@ -426,6 +445,8 @@ impl Runner {
             Command::SetLocation { fix } => self.engine.set_location(fix, now),
             Command::Wipe => self.wipe(),
             Command::Favorite { peer, on } => self.engine.set_favorite(&peer, on, now),
+            Command::SetBridge { enabled } => self.engine.set_bridge(enabled, now),
+            Command::SetNearbyOnly { on } => self.engine.set_nearby_only(on),
             Command::Refresh => {
                 self.engine.announce(now);
                 self.engine.emit_favorites();
@@ -563,6 +584,7 @@ async fn run(
     runner.pool.set_dialer(runner.dialer());
     runner.engine.announce(now_ms());
     runner.engine.start_account(now_ms());
+    runner.engine.start_bridge(now_ms());
     runner.emit_tor();
     runner.apply();
     runner.refresh_directory();

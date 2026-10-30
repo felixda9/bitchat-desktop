@@ -15,7 +15,15 @@ export const app = $state({
   dm: null as null | { peer: string; display: string; lines: DmLine[] },
   tor: { state: "starting", progress: 0, summary: "" },
   relays: {} as Record<string, string>,
-  settings: { tor_enabled: true, custom_relays: [] as string[], key_in_keychain: true, has_location: false },
+  settings: {
+    tor_enabled: true,
+    custom_relays: [] as string[],
+    key_in_keychain: true,
+    has_location: false,
+    bridge_enabled: false,
+    bridge_cell: null as string | null,
+    nearby_only: false,
+  },
   notes: [] as Note[],
   regional: [] as RegionalChannel[],
   /** Bluetooth: starting | on | off | unavailable. */
@@ -92,7 +100,13 @@ export function handle(e: UiEvent) {
         custom_relays: e.custom_relays,
         key_in_keychain: e.key_in_keychain,
         has_location: e.has_location,
+        bridge_enabled: e.bridge_enabled,
+        bridge_cell: e.bridge_cell,
+        nearby_only: e.nearby_only,
       };
+      break;
+    case "remove_public":
+      app.timeline = app.timeline.filter((l) => l.kind !== "public" || l.message.id !== e.id);
       break;
     case "mesh":
       app.mesh = { state: e.state, links: e.links };

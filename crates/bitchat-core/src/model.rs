@@ -15,6 +15,8 @@ pub struct PublicMessage {
     pub teleported: bool,
     /// A `* … *` hug/slap action, rendered like a system line.
     pub emote: bool,
+    /// Arrived across the mesh bridge.
+    pub bridged: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -25,6 +27,8 @@ pub struct Person {
     pub me: bool,
     /// A mesh peer we favorited.
     pub favorite: bool,
+    /// Across the mesh bridge: display only, no DMs.
+    pub bridged: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -153,6 +157,14 @@ pub enum UiEvent {
         custom_relays: Vec<String>,
         key_in_keychain: bool,
         has_location: bool,
+        bridge_enabled: bool,
+        /// The bridge's rendezvous cell, once it has one.
+        bridge_cell: Option<String>,
+        nearby_only: bool,
+    },
+    /// Remove a timeline row (a bridged copy whose radio copy arrived).
+    RemovePublic {
+        id: String,
     },
     Wiped,
     /// Bluetooth for #mesh: `on`, `off` or `unavailable`, and live links.

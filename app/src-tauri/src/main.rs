@@ -80,6 +80,16 @@ fn favorite(app: State<'_, App>, peer: String, on: bool) {
     send(&app, Command::Favorite { peer, on });
 }
 
+#[tauri::command]
+fn set_bridge(app: State<'_, App>, enabled: bool) {
+    send(&app, Command::SetBridge { enabled });
+}
+
+#[tauri::command]
+fn set_nearby_only(app: State<'_, App>, on: bool) {
+    send(&app, Command::SetNearbyOnly { on });
+}
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
@@ -96,6 +106,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             favorite,
+            set_bridge,
+            set_nearby_only,
             join,
             leave,
             submit,
