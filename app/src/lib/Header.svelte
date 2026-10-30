@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { api } from "./api";
   import { app } from "./store.svelte";
 
   let { onChannel, onSettings, onWipe }: { onChannel: () => void; onSettings: () => void; onWipe: () => void } =
@@ -13,6 +14,27 @@
       clicks = [];
       onWipe();
     }
+  }
+
+  // Your nickname sits next to the logo, editable in place (as on iOS).
+  let editing = $state(false);
+  let draft = $state("");
+  function startEdit() {
+    draft = app.nickname;
+    editing = true;
+  }
+  function commit() {
+    const name = draft.trim();
+    if (name && name !== app.nickname) api.setNickname(name);
+    editing = false;
+  }
+  function onKey(e: KeyboardEvent) {
+    if (e.key === "Enter") commit();
+    if (e.key === "Escape") editing = false;
+  }
+  function focus(el: HTMLInputElement) {
+    el.focus();
+    el.select();
   }
 
   const peopleLabel = $derived(app.people.unknown ? "? people" : `${app.people.count} ${app.people.count === 1 ? "person" : "people"}`);
@@ -34,7 +56,22 @@
 </script>
 
 <header>
-  <button class="logo" onclick={logoClick} title="triple-click to wipe everything">bitchat/</button>
+  <span class="me">
+    <button class="logo" onclick={logoClick} title="triple-click to wipe everything">bitchat/</button>
+    {#if editing}
+      <span class="at">@</span><input
+        class="nick"
+        bind:value={draft}
+        maxlength="50"
+        onkeydown={onKey}
+        onblur={commit}
+        use:focus
+        aria-label="your nickname"
+      />
+    {:else}
+      <button class="nick" onclick={startEdit} title="your nickname — click to change">@{app.nickname}</button>
+    {/if}
+  </span>
   <button class="channel" onclick={onChannel}>
     {#if app.channel}
       #{app.channel.geohash}
@@ -72,6 +109,29 @@
     color: var(--accent);
     font-weight: 700;
     user-select: none;
+    padding-right: 0;
+  }
+  .me {
+    display: inline-flex;
+    align-items: baseline;
+  }
+  .nick {
+    color: var(--accent);
+    padding-left: 0;
+  }
+  .nick:hover {
+    text-decoration: underline;
+  }
+  .at {
+    color: var(--accent);
+  }
+  input.nick {
+    width: 14ch;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--accent);
+    font: inherit;
+    outline: none;
   }
   .channel {
     color: var(--accent);
