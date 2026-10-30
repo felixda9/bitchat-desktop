@@ -22,18 +22,25 @@
 | **Bluetooth mesh** (`#mesh`) | Public chat, private messages, relaying and sync with phones nearby. The PC both scans and advertises, so phones find it too. |
 | **Location channels** | Geohash channels over Nostr (region down to block), people counts, teleporting, location notes (`/drop`). |
 | **Private messages** | Noise-encrypted over Bluetooth, gift-wrapped over Nostr, with delivered and read receipts. |
-| **Images and voice messages** | Send and receive images in `#mesh` and Bluetooth private chats (encrypted), and play voice messages from phones. |
+| **Images and voice messages** | Send images in `#mesh` and Bluetooth private chats (encrypted in private chats). Like the phones, images are shrunk and stripped of location data before sending. Voice messages from phones play with a waveform. |
 | **Favorites** | Star someone in `#mesh` and keep messaging them over the internet when you're apart. |
 | **Mesh bridge** | Joins nearby Bluetooth groups over the internet. Messages from across the bridge show with 🌐. Also carries traffic for phones around you that have no internet. |
 | **Commands** | `/msg` `/who` `/hug` `/slap` `/block` `/unblock` `/fav` `/unfav` `/drop` `/clear` `/help` |
 | **Panic wipe** | Triple-click the `bitchat/` logo to erase everything and start as a new person. |
 | **Privacy** | Tor on by default. Keys kept in the system keychain, saved data encrypted. |
 
-Not yet: recording voice messages, live voice, files, groups, QR verification, `/ping`, `/trace`, payments. On macOS, use the official app.
+Not yet: recording voice messages, live voice, sending files, groups, QR verification, `/ping`, `/trace`, payments. On macOS, use the official app.
+
+## Using it
+
+- `#mesh` is the Bluetooth chat; the channels under it are location channels around you. Click the channel name at the top to go to any geohash.
+- Click a name to chat privately. The ☆ in a private chat makes them a favorite.
+- 📷, or pasting an image, sends it in `#mesh` or in a Bluetooth private chat.
+- Settings (⚙) has your nickname, Tor, extra relays and the mesh bridge.
 
 ## Compatibility
 
-Works with bitchat **1.8** for iPhone and Mac and **2.2** for Android. The packet format, Noise handshake and Nostr envelopes are checked in CI against test vectors produced by the iOS code, in both directions.
+Works with bitchat **1.8** for iPhone and Mac and **2.2** for Android. The packet format, Noise handshake, Nostr envelopes, bridge carriers and file transfers are checked in CI against test vectors produced by the iOS code, in both directions.
 
 ## Requirements
 
