@@ -1,12 +1,29 @@
 <script lang="ts">
   import { api, colorFor, time } from "./api";
   import { app } from "./store.svelte";
+
+  const meshLabel = $derived.by(() => {
+    switch (app.mesh.state) {
+      case "on":
+        return app.mesh.links ? `bluetooth · ${app.mesh.links} nearby` : "bluetooth · nobody nearby";
+      case "off":
+        return "bluetooth is off";
+      case "unavailable":
+        return "no bluetooth adapter";
+      default:
+        return "bluetooth";
+    }
+  });
 </script>
 
 <aside>
   <h3>channels</h3>
   <ul>
-    <li><span class="muted" title="the bluetooth mesh chat comes in a later version">#mesh · needs bluetooth</span></li>
+    <li>
+      <button class:active={app.channel?.geohash === "mesh"} onclick={() => api.join("mesh", false)}>
+        #mesh <span class="muted">{meshLabel}</span>
+      </button>
+    </li>
     {#each app.regional as c (c.geohash)}
       <li>
         <button class:active={app.channel?.geohash === c.geohash} onclick={() => api.join(c.geohash, false)}>

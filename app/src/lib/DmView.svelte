@@ -27,7 +27,7 @@
 
 {#if app.dm}
   <div class="bar">
-    <span style:color={colorFor(app.dm.peer)}>#{app.channel?.geohash ?? ""}/@{app.dm.display}</span>
+    <span style:color={colorFor(app.dm.peer)}>#{app.conversations.find((c) => c.peer === app.dm?.peer)?.geohash || app.channel?.geohash || ""}/@{app.dm.display}</span>
     <span class="spacer"></span>
     <button onclick={() => api.openDm(null)}>close</button>
   </div>

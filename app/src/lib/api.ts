@@ -66,6 +66,7 @@ export type UiEvent =
   | { type: "notes"; geohash: string; notes: Note[] }
   | { type: "tor"; state: string; progress: number; summary: string }
   | { type: "relay"; url: string; status: string }
+  | { type: "mesh"; state: string; links: number }
   | {
       type: "settings";
       nickname: string;

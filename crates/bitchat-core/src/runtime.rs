@@ -1,10 +1,14 @@
 //! Runs the engine: relay pool, Tor, storage, proof-of-work mining, receipt
-//! pacing, presence heartbeats and the daily relay-list refresh.
+//! pacing, presence heartbeats, the daily relay-list refresh, and the
+//! Bluetooth mesh (BLE central + mesh node).
 
-use crate::engine::{Effect, Engine, MineRequest};
+use crate::engine::{Effect, Engine, MeshPeer, MineRequest};
 use crate::model::UiEvent;
 use crate::state::State;
 use crate::storage::{Storage, StorageError};
+use bitchat_ble::central::{BleEvent, BleStatus, Central};
+use bitchat_mesh::MeshIdentity;
+use bitchat_mesh::node::{MeshNode, Output};
 use bitchat_nostr::event::kind;
 use bitchat_nostr::net::{Dialer, PoolEvent, RelayPool, Tor, TorStatus, http};
 use bitchat_nostr::pow;
@@ -19,6 +23,8 @@ use tokio::sync::{mpsc, watch};
 pub const ACK_INTERVAL: Duration = Duration::from_millis(350);
 pub const PEOPLE_REFRESH: Duration = Duration::from_secs(30);
 pub const DIRECTORY_REFRESH: Duration = Duration::from_secs(24 * 3600);
+/// Mesh timers (relay jitter, handshakes, sync) run on this tick.
+pub const MESH_TICK: Duration = Duration::from_millis(50);
 const DIRECTORY_CACHE: &str = "relays.csv";
 
 #[derive(Clone, Debug)]
@@ -130,6 +136,17 @@ struct Runner {
     mining: bool,
     mined_tx: mpsc::UnboundedSender<(u64, Vec<String>)>,
     dir_tx: mpsc::UnboundedSender<Vec<u8>>,
+    mesh: MeshNode,
+    central: Option<Central>,
+    ble_tx: mpsc::UnboundedSender<BleEvent>,
+    /// Last radio state, replayed when the UI reconnects.
+    radio: (String, usize),
+    mesh_ticks: u64,
+}
+
+fn mesh_node(state: &State) -> MeshNode {
+    let id = MeshIdentity::new(state.identity.noise_static, state.identity.signing_seed);
+    MeshNode::new(id, &state.nickname, now_ms())
 }
 
 impl Runner {
@@ -195,7 +212,18 @@ impl Runner {
     }
 
     fn apply(&mut self) {
-        for effect in self.engine.take_effects() {
+        loop {
+            let effects = self.engine.take_effects();
+            if effects.is_empty() {
+                break;
+            }
+            self.apply_effects(effects);
+        }
+        self.mine_next();
+    }
+
+    fn apply_effects(&mut self, effects: Vec<Effect>) {
+        for effect in effects {
             match effect {
                 Effect::Subscribe { id, filter, relays } => {
                     self.pool.subscribe(id, filter, &relays)
@@ -209,9 +237,104 @@ impl Runner {
                         log::error!("saving state failed: {e}");
                     }
                 }
+                Effect::MeshPublic { text } => {
+                    let out = self.mesh.send_public(&text, now_ms());
+                    self.apply_mesh(out);
+                }
+                Effect::MeshPrivate { peer, payload } => {
+                    let out = self.mesh.send_private(peer, payload, now_ms());
+                    self.apply_mesh(out);
+                }
             }
         }
-        self.mine_next();
+    }
+
+    /// Carries out what the mesh node asked for.
+    fn apply_mesh(&mut self, outputs: Vec<Output>) {
+        let now = now_ms();
+        let mut events = false;
+        for output in outputs {
+            match output {
+                Output::Write { link, frame } => {
+                    if let Some(c) = &self.central {
+                        c.write(link, frame);
+                    }
+                }
+                Output::Close { link } => {
+                    if let Some(c) = &self.central {
+                        c.close(link);
+                    }
+                }
+                Output::Event(event) => {
+                    events = true;
+                    self.engine.on_mesh_event(event, now);
+                }
+            }
+        }
+        if events {
+            self.sync_mesh_peers();
+        }
+    }
+
+    fn sync_mesh_peers(&mut self) {
+        let peers = self
+            .mesh
+            .peers()
+            .map(|p| MeshPeer {
+                id: p.peer_id,
+                nickname: p.nickname.clone(),
+                direct: p.direct,
+            })
+            .collect();
+        self.engine.set_mesh_peers(peers, now_ms());
+    }
+
+    fn on_ble(&mut self, event: BleEvent) {
+        let now = now_ms();
+        match event {
+            BleEvent::Status(status) => {
+                self.radio = match status {
+                    BleStatus::Unavailable(reason) => {
+                        log::info!("bluetooth unavailable: {reason}");
+                        ("unavailable".into(), 0)
+                    }
+                    BleStatus::Off => ("off".into(), 0),
+                    BleStatus::Scanning { links } => ("on".into(), links),
+                };
+                self.engine
+                    .set_mesh_radio(&self.radio.0.clone(), self.radio.1);
+            }
+            BleEvent::LinkUp {
+                link,
+                max_write,
+                name,
+            } => {
+                log::info!("mesh link {link} up: {name}");
+                let out = self.mesh.link_up(link, max_write, now);
+                self.apply_mesh(out);
+            }
+            BleEvent::LinkDown { link } => {
+                let out = self.mesh.link_down(link);
+                self.apply_mesh(out);
+                self.sync_mesh_peers();
+            }
+            BleEvent::Frame { link, frame } => {
+                let out = self.mesh.on_frame(link, &frame, now);
+                self.apply_mesh(out);
+            }
+        }
+        self.apply();
+    }
+
+    fn mesh_tick(&mut self) {
+        let out = self.mesh.tick(now_ms());
+        self.apply_mesh(out);
+        self.mesh_ticks += 1;
+        // Nicknames change without an event; look about once a second.
+        if self.mesh_ticks.is_multiple_of(20) {
+            self.sync_mesh_peers();
+        }
+        self.apply();
     }
 
     /// One mining job at a time keeps sends in order (as on iOS).
@@ -250,7 +373,12 @@ impl Runner {
                         .tor_status
                         .as_ref()
                         .is_none_or(|rx| *rx.borrow() != TorStatus::Ready);
-                if tor_waiting && !text.trim_start().starts_with('/') {
+                // Bluetooth sends don't wait for Tor.
+                let to_mesh = match self.engine.open_dm_peer() {
+                    Some(peer) => peer.starts_with(crate::engine::MESH_PREFIX),
+                    None => self.engine.in_mesh(),
+                };
+                if tor_waiting && !to_mesh && !text.trim_start().starts_with('/') {
                     (self.sink)(UiEvent::System {
                         text: "tor isn't connected yet — this goes out once it is. turn tor off in settings to send directly.".into(),
                     });
@@ -258,7 +386,11 @@ impl Runner {
                 self.engine.submit(&text, now);
             }
             Command::OpenDm { peer } => self.engine.open_dm(peer.as_deref()),
-            Command::SetNickname { nickname } => self.engine.set_nickname(&nickname),
+            Command::SetNickname { nickname } => {
+                self.engine.set_nickname(&nickname);
+                let out = self.mesh.set_nickname(&self.engine.state.nickname, now);
+                self.apply_mesh(out);
+            }
             Command::SetTor { enabled } => {
                 self.engine.set_tor_enabled(enabled);
                 if enabled {
@@ -274,6 +406,8 @@ impl Runner {
             Command::Refresh => {
                 self.engine.announce(now);
                 self.emit_tor();
+                let (state, links) = self.radio.clone();
+                self.engine.set_mesh_radio(&state, links);
             }
         }
         self.apply();
@@ -282,6 +416,8 @@ impl Runner {
     /// Panic wipe: drop every connection and secret, start over as a new person.
     fn wipe(&mut self) {
         self.pool.close_all();
+        // Drop every Bluetooth link; the new identity reconnects from scratch.
+        self.central = None;
         self.mine_queue.clear();
         let _ = self.engine.take_effects();
         if let Err(e) = self.storage.wipe() {
@@ -292,7 +428,9 @@ impl Runner {
             log::error!("saving fresh state failed: {e}");
         }
         let tor_enabled = state.tor_enabled;
+        self.mesh = mesh_node(&state);
         self.engine = Engine::new(state, self.storage.key_in_keychain());
+        self.central = Some(Central::start(self.ble_tx.clone()));
         if tor_enabled {
             self.start_tor();
         }
@@ -368,6 +506,8 @@ async fn run(
 
     let (pool, mut pool_rx): (RelayPool, mpsc::UnboundedReceiver<PoolEvent>) =
         RelayPool::spawn(Dialer::Direct);
+    let (ble_tx, mut ble_rx) = mpsc::unbounded_channel();
+    let mesh = mesh_node(&engine.state);
     let mut runner = Runner {
         storage,
         engine,
@@ -379,7 +519,13 @@ async fn run(
         mining: false,
         mined_tx,
         dir_tx,
+        mesh,
+        central: None,
+        ble_tx: ble_tx.clone(),
+        radio: ("starting".into(), 0),
+        mesh_ticks: 0,
     };
+    runner.central = Some(Central::start(ble_tx));
     if runner.engine.state.tor_enabled {
         runner.start_tor();
     }
@@ -397,6 +543,8 @@ async fn run(
     let mut acks = tokio::time::interval(ACK_INTERVAL);
     let mut people = tokio::time::interval(PEOPLE_REFRESH);
     let mut directory = tokio::time::interval(DIRECTORY_REFRESH);
+    let mut mesh_tick = tokio::time::interval(MESH_TICK);
+    mesh_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     directory.tick().await;
     let presence = tokio::time::sleep(jitter(40, 80));
     tokio::pin!(presence);
@@ -431,6 +579,8 @@ async fn run(
                 runner.apply();
             }
             Some(csv) = dir_rx.recv() => runner.accept_directory(csv),
+            Some(event) = ble_rx.recv() => runner.on_ble(event),
+            _ = mesh_tick.tick() => runner.mesh_tick(),
             _ = acks.tick() => {
                 if runner.engine.pending_acks() > 0 {
                     runner.engine.next_ack(now_ms());

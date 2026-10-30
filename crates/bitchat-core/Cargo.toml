@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bitchat-ble = { version = "0.1.0", path = "../bitchat-ble" }
+bitchat-mesh = { version = "0.1.0", path = "../bitchat-mesh" }
+bitchat-noise = { version = "0.1.0", path = "../bitchat-noise" }
 bitchat-nostr = { version = "0.1.0", path = "../bitchat-nostr", features = ["net"] }
 bitchat-proto = { version = "0.1.0", path = "../bitchat-proto" }
 chacha20poly1305 = "0.11.0"

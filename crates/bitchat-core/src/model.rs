@@ -139,4 +139,9 @@ pub enum UiEvent {
         has_location: bool,
     },
     Wiped,
+    /// Bluetooth for #mesh: `on`, `off` or `unavailable`, and live links.
+    Mesh {
+        state: String,
+        links: usize,
+    },
 }

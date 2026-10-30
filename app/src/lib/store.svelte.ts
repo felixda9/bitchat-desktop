@@ -18,6 +18,8 @@ export const app = $state({
   settings: { tor_enabled: true, custom_relays: [] as string[], key_in_keychain: true, has_location: false },
   notes: [] as Note[],
   regional: [] as RegionalChannel[],
+  /** Bluetooth: starting | on | off | unavailable. */
+  mesh: { state: "starting", links: 0 },
   wipedAt: 0,
 });
 
@@ -88,6 +90,9 @@ export function handle(e: UiEvent) {
         key_in_keychain: e.key_in_keychain,
         has_location: e.has_location,
       };
+      break;
+    case "mesh":
+      app.mesh = { state: e.state, links: e.links };
       break;
     case "wiped":
       app.timeline = [];

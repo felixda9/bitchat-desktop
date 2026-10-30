@@ -6,6 +6,7 @@
 use crate::limits::{RateLimiter, content_key};
 use crate::model::*;
 use crate::state::{State, clean_nickname};
+use bitchat_mesh::node::NodeEvent;
 use bitchat_nostr::embedded::{self, Addressing, Embedded};
 use bitchat_nostr::envelope;
 use bitchat_nostr::event::kind;
@@ -13,7 +14,9 @@ use bitchat_nostr::net::PoolEvent;
 use bitchat_nostr::relay_directory::{Directory, RELAYS_PER_CHANNEL};
 use bitchat_nostr::{Event, Filter, Keys, pow};
 use bitchat_proto::geohash::{self, Level};
-use bitchat_proto::payload::PRIVATE_MESSAGE_FIELD_MAX;
+use bitchat_proto::payload::{
+    NoisePayload, PRIVATE_MESSAGE_FIELD_MAX, PayloadType, PrivateMessage,
+};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 /// History fetched when joining a channel.
@@ -53,6 +56,48 @@ pub enum Effect {
     Mine(MineRequest),
     Ui(UiEvent),
     Save,
+    /// Broadcast a public message on the Bluetooth mesh.
+    MeshPublic {
+        text: String,
+    },
+    /// Send a Noise payload (type byte first) to a mesh peer.
+    MeshPrivate {
+        peer: [u8; 8],
+        payload: Vec<u8>,
+    },
+}
+
+/// The Bluetooth channel's name; mesh peers are `mesh:<peer id hex>`.
+pub const MESH_CHANNEL: &str = "mesh";
+pub const MESH_PREFIX: &str = "mesh:";
+
+pub fn mesh_key(peer: &[u8; 8]) -> String {
+    format!("{MESH_PREFIX}{}", hex::encode(peer))
+}
+
+pub fn mesh_peer_id(key: &str) -> Option<[u8; 8]> {
+    hex::decode(key.strip_prefix(MESH_PREFIX)?)
+        .ok()?
+        .try_into()
+        .ok()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MeshPeer {
+    pub id: [u8; 8],
+    pub nickname: String,
+    pub direct: bool,
+}
+
+/// The #mesh view: its timeline and who is around.
+#[derive(Default)]
+struct Mesh {
+    active: bool,
+    me: String,
+    timeline: VecDeque<PublicMessage>,
+    peers: Vec<MeshPeer>,
+    /// Last nickname seen per peer, kept after they leave (for DMs).
+    names: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug)]
@@ -148,6 +193,7 @@ pub struct Engine {
     notes: Vec<(Event, String)>,
     effects: Vec<Effect>,
     key_in_keychain: bool,
+    mesh: Mesh,
 }
 
 pub fn geo_sub(geohash: &str) -> String {
@@ -220,7 +266,15 @@ impl Engine {
             notes: Vec::new(),
             effects: Vec::new(),
             key_in_keychain,
+            mesh: Mesh::default(),
         }
+        .with_mesh_identity()
+    }
+
+    fn with_mesh_identity(mut self) -> Engine {
+        let public = bitchat_noise::public_key(&self.state.identity.noise_static);
+        self.mesh.me = mesh_key(&bitchat_noise::peer_id(&public));
+        self
     }
 
     pub fn take_effects(&mut self) -> Vec<Effect> {
@@ -263,11 +317,14 @@ impl Engine {
         self.emit_location();
         self.emit_channel();
         self.ui(UiEvent::ClearTimeline);
-        let timeline: Vec<PublicMessage> = self
-            .channel
-            .iter()
-            .flat_map(|c| c.timeline.iter().cloned())
-            .collect();
+        let timeline: Vec<PublicMessage> = if self.mesh.active {
+            self.mesh.timeline.iter().cloned().collect()
+        } else {
+            self.channel
+                .iter()
+                .flat_map(|c| c.timeline.iter().cloned())
+                .collect()
+        };
         for message in timeline {
             self.ui(UiEvent::Public { message });
         }
@@ -301,6 +358,14 @@ impl Engine {
     }
 
     fn emit_channel(&mut self) {
+        if self.mesh.active {
+            self.ui(UiEvent::Channel {
+                geohash: Some(MESH_CHANNEL.into()),
+                level: Some("bluetooth".into()),
+                teleported: false,
+            });
+            return;
+        }
         let event = match &self.channel {
             Some(c) => UiEvent::Channel {
                 geohash: Some(c.geohash.clone()),
@@ -378,6 +443,10 @@ impl Engine {
     /// which iOS always treats as teleported.
     pub fn join_channel(&mut self, raw: &str, manual: bool, now_ms: u64) -> bool {
         let gh = raw.trim().trim_start_matches('#').to_lowercase();
+        if gh == MESH_CHANNEL {
+            self.join_mesh(now_ms);
+            return true;
+        }
         if !geohash::is_valid(&gh) {
             self.system(format!("'{raw}' is not a valid geohash"));
             return false;
@@ -433,6 +502,12 @@ impl Engine {
     }
 
     pub fn leave_channel(&mut self) {
+        if self.mesh.active {
+            self.mesh.active = false;
+            self.state.last_channel = None;
+            self.effects.push(Effect::Save);
+            self.emit_channel();
+        }
         if let Some(c) = self.channel.take() {
             self.state.last_channel = None;
             self.effects.push(Effect::Save);
@@ -447,6 +522,14 @@ impl Engine {
     }
 
     fn display_for(&self, pubkey: &str) -> String {
+        if let Some(hex) = pubkey.strip_prefix(MESH_PREFIX) {
+            let nick = if pubkey == self.mesh.me {
+                Some(self.state.nickname.as_str())
+            } else {
+                self.mesh.names.get(pubkey).map(String::as_str)
+            };
+            return display_name(nick, hex);
+        }
         let nick = self
             .channel
             .as_ref()
@@ -457,6 +540,9 @@ impl Engine {
 
     /// People seen in the last five minutes, not blocked.
     fn visible_people(&self, now: i64) -> Vec<Person> {
+        if self.mesh.active {
+            return self.mesh_people();
+        }
         let Some(c) = &self.channel else {
             return Vec::new();
         };
@@ -488,6 +574,16 @@ impl Engine {
     }
 
     pub fn emit_people(&mut self, now: i64) {
+        if self.mesh.active {
+            let people = self.mesh_people();
+            self.ui(UiEvent::People {
+                geohash: MESH_CHANNEL.into(),
+                count: people.len(),
+                unknown: false,
+                people,
+            });
+            return;
+        }
         let Some(c) = &self.channel else { return };
         let geohash = c.geohash.clone();
         let people = self.visible_people(now);
@@ -807,6 +903,10 @@ impl Engine {
     /// Queues a kind-20000 message for mining. `echo` shows it in the
     /// timeline once sent; emotes pass `false` and show a system line instead.
     pub fn send_public(&mut self, text: &str, now_ms: u64, echo: bool) {
+        if self.mesh.active {
+            self.send_mesh_public(text, now_ms, echo);
+            return;
+        }
         let Some(c) = &self.channel else {
             self.system("join a location channel first");
             return;
@@ -897,8 +997,12 @@ impl Engine {
             });
             return;
         };
+        let mesh_peer = mesh_peer_id(&peer);
         let keys = self.channel.as_ref().map(|c| c.keys.clone());
         let conv = self.dms.entry(peer.clone()).or_default();
+        if mesh_peer.is_some() {
+            conv.geohash = MESH_CHANNEL.into();
+        }
         if conv.geohash.is_empty() {
             conv.geohash = self
                 .channel
@@ -919,7 +1023,11 @@ impl Engine {
         };
         conv.unread = 0;
         let messages = conv.messages.clone();
-        if let Some(keys) = keys {
+        if let Some(id) = mesh_peer {
+            for message_id in unread.into_iter().rev() {
+                self.mesh_ack(id, PayloadType::ReadReceipt, &message_id);
+            }
+        } else if let Some(keys) = keys {
             for message_id in unread.into_iter().rev() {
                 self.acks.push_back(PendingAck {
                     keys: keys.clone(),
@@ -942,6 +1050,10 @@ impl Engine {
     }
 
     pub fn send_dm(&mut self, peer: &str, text: &str, now_ms: u64) {
+        if let Some(id) = mesh_peer_id(&peer.to_lowercase()) {
+            self.send_mesh_dm(id, text, now_ms);
+            return;
+        }
         let Some(c) = &self.channel else {
             self.system("you're not in a location channel — join one to send private messages");
             return;
@@ -1003,6 +1115,9 @@ impl Engine {
                 c.messages.clear();
             }
             self.ui(UiEvent::ClearDm { peer });
+        } else if self.mesh.active {
+            self.mesh.timeline.clear();
+            self.ui(UiEvent::ClearTimeline);
         } else if let Some(c) = self.channel.as_mut() {
             c.timeline.clear();
             self.ui(UiEvent::ClearTimeline);
@@ -1019,6 +1134,18 @@ impl Engine {
         if name.contains('#') {
             let hits: Vec<_> = people.iter().filter(|p| p.display == name).collect();
             return (hits.len() == 1).then(|| hits[0].pubkey.clone());
+        }
+        if self.mesh.active {
+            let lower = name.to_lowercase();
+            let hits: Vec<String> = self
+                .mesh
+                .peers
+                .iter()
+                .filter(|p| p.nickname.to_lowercase() == lower)
+                .map(|p| mesh_key(&p.id))
+                .filter(|k| !self.state.blocked.contains(k))
+                .collect();
+            return (hits.len() == 1).then(|| hits[0].clone());
         }
         let c = self.channel.as_ref()?;
         let lower = name.to_lowercase();
@@ -1042,6 +1169,14 @@ impl Engine {
         {
             return Some(p.pubkey);
         }
+        if self.mesh.active {
+            return self
+                .mesh
+                .peers
+                .iter()
+                .find(|p| p.nickname == name)
+                .map(|p| mesh_key(&p.id));
+        }
         let c = self.channel.as_ref()?;
         c.nicknames
             .iter()
@@ -1062,7 +1197,7 @@ impl Engine {
     }
 
     pub fn in_channel(&self) -> bool {
-        self.channel.is_some()
+        self.channel.is_some() || self.mesh.active
     }
 
     pub fn blocked_names(&self) -> Vec<String> {
@@ -1085,6 +1220,265 @@ impl Engine {
 
     pub fn reply(&mut self, text: impl Into<String>) {
         self.system(text);
+    }
+
+    // ---- bluetooth mesh ----------------------------------------------
+
+    pub fn in_mesh(&self) -> bool {
+        self.mesh.active
+    }
+
+    fn join_mesh(&mut self, now_ms: u64) {
+        self.leave_channel();
+        self.mesh.active = true;
+        self.state.last_channel = Some(MESH_CHANNEL.into());
+        self.state.last_channel_manual = false;
+        self.effects.push(Effect::Save);
+        self.ui(UiEvent::ClearTimeline);
+        self.emit_channel();
+        let timeline: Vec<PublicMessage> = self.mesh.timeline.iter().cloned().collect();
+        for message in timeline {
+            self.ui(UiEvent::Public { message });
+        }
+        self.emit_people((now_ms / 1000) as i64);
+    }
+
+    fn mesh_people(&self) -> Vec<Person> {
+        let mut people: Vec<Person> = self
+            .mesh
+            .peers
+            .iter()
+            .map(|p| (mesh_key(&p.id), p))
+            .filter(|(k, _)| !self.state.blocked.contains(k))
+            .map(|(k, p)| Person {
+                display: display_name(Some(&p.nickname), &hex::encode(p.id)),
+                pubkey: k,
+                // Heard through other devices rather than directly.
+                teleported: !p.direct,
+                me: false,
+            })
+            .collect();
+        let me = self.mesh.me.clone();
+        people.push(Person {
+            display: self.display_for(&me),
+            pubkey: me,
+            teleported: false,
+            me: true,
+        });
+        people.sort_by(|a, b| {
+            a.teleported
+                .cmp(&b.teleported)
+                .then_with(|| a.display.cmp(&b.display))
+        });
+        people
+    }
+
+    /// Who the mesh node currently knows (verified announces).
+    pub fn set_mesh_peers(&mut self, peers: Vec<MeshPeer>, now_ms: u64) {
+        for p in &peers {
+            self.mesh.names.insert(mesh_key(&p.id), p.nickname.clone());
+        }
+        if peers == self.mesh.peers {
+            return;
+        }
+        self.mesh.peers = peers;
+        if self.mesh.active {
+            self.emit_people((now_ms / 1000) as i64);
+        }
+        if self.dms.keys().any(|k| k.starts_with(MESH_PREFIX)) {
+            self.emit_conversations();
+        }
+    }
+
+    /// Bluetooth radio state for the channel list.
+    pub fn set_mesh_radio(&mut self, state: &str, links: usize) {
+        self.ui(UiEvent::Mesh {
+            state: state.into(),
+            links,
+        });
+    }
+
+    fn send_mesh_public(&mut self, text: &str, now_ms: u64, echo: bool) {
+        if text.chars().count() > MAX_PUBLIC_CHARS {
+            self.system("message too long");
+            return;
+        }
+        self.effects.push(Effect::MeshPublic {
+            text: text.to_string(),
+        });
+        if echo {
+            let me = self.mesh.me.clone();
+            self.push_mesh_timeline(PublicMessage {
+                id: format!("{me}-{now_ms}"),
+                display: self.display_for(&me),
+                pubkey: me,
+                content: text.to_string(),
+                timestamp: now_ms,
+                own: true,
+                teleported: false,
+                emote: is_emote(text),
+            });
+        }
+    }
+
+    fn push_mesh_timeline(&mut self, message: PublicMessage) {
+        let t = &mut self.mesh.timeline;
+        let pos = t
+            .iter()
+            .rposition(|m| m.timestamp <= message.timestamp)
+            .map_or(0, |i| i + 1);
+        t.insert(pos, message.clone());
+        while t.len() > TIMELINE_CAP {
+            t.pop_front();
+        }
+        if self.mesh.active {
+            self.ui(UiEvent::Public { message });
+        }
+    }
+
+    fn mesh_ack(&mut self, peer: [u8; 8], kind: PayloadType, message_id: &str) {
+        self.effects.push(Effect::MeshPrivate {
+            peer,
+            payload: NoisePayload::ack(kind, message_id).encode(),
+        });
+    }
+
+    fn send_mesh_dm(&mut self, id: [u8; 8], text: &str, now_ms: u64) {
+        let peer = mesh_key(&id);
+        if self.state.blocked.contains(&peer) {
+            self.system("you blocked this person — /unblock them first");
+            return;
+        }
+        if peer == self.mesh.me {
+            self.system("that's you");
+            return;
+        }
+        if text.len() > PRIVATE_MESSAGE_FIELD_MAX {
+            self.system(format!(
+                "message too long for a private message ({} of {PRIVATE_MESSAGE_FIELD_MAX} bytes)",
+                text.len()
+            ));
+            return;
+        }
+        let message_id = new_message_id();
+        let Some(body) = PrivateMessage::new(message_id.clone(), text).encode() else {
+            return;
+        };
+        self.effects.push(Effect::MeshPrivate {
+            peer: id,
+            payload: NoisePayload::new(PayloadType::PrivateMessage, body).encode(),
+        });
+        let message = DmMessage {
+            id: message_id,
+            from_me: true,
+            content: text.to_string(),
+            timestamp: now_ms,
+            status: Some(DmStatus::Sent),
+        };
+        let conv = self.dms.entry(peer.clone()).or_default();
+        conv.geohash = MESH_CHANNEL.into();
+        conv.messages.push(message.clone());
+        self.ui(UiEvent::Dm { peer, message });
+        self.emit_conversations();
+    }
+
+    pub fn on_mesh_event(&mut self, event: NodeEvent, now_ms: u64) {
+        match event {
+            NodeEvent::PublicMessage {
+                sender,
+                nickname,
+                text,
+                timestamp,
+            } => {
+                let key = mesh_key(&sender);
+                if self.state.blocked.contains(&key) {
+                    return;
+                }
+                self.mesh.names.insert(key.clone(), nickname.clone());
+                self.push_mesh_timeline(PublicMessage {
+                    id: format!("{key}-{timestamp}"),
+                    display: display_name(Some(&nickname), &hex::encode(sender)),
+                    pubkey: key,
+                    emote: is_emote(&text),
+                    content: text,
+                    // Their clock may be off; never show it in the future.
+                    timestamp: timestamp.min(now_ms),
+                    own: false,
+                    teleported: false,
+                });
+            }
+            NodeEvent::Private { from, plaintext } => {
+                self.on_mesh_private(from, &plaintext, now_ms)
+            }
+            NodeEvent::Unsent { peer, payloads } => {
+                let key = mesh_key(&peer);
+                for payload in payloads {
+                    if let Some(p) = NoisePayload::decode(&payload)
+                        && p.kind == PayloadType::PrivateMessage
+                        && let Some(m) = PrivateMessage::decode(&p.data)
+                    {
+                        self.update_status(&key, &m.message_id, DmStatus::Failed);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_mesh_private(&mut self, from: [u8; 8], plaintext: &[u8], now_ms: u64) {
+        let Some(payload) = NoisePayload::decode(plaintext) else {
+            return;
+        };
+        let peer = mesh_key(&from);
+        match payload.kind {
+            PayloadType::PrivateMessage => {
+                let Some(m) = PrivateMessage::decode(&payload.data) else {
+                    return;
+                };
+                if self.state.blocked.contains(&peer) {
+                    return;
+                }
+                let is_open = self.open_dm.as_deref() == Some(peer.as_str());
+                let conv = self.dms.entry(peer.clone()).or_default();
+                conv.geohash = MESH_CHANNEL.into();
+                if conv
+                    .messages
+                    .iter()
+                    .any(|x| x.id == m.message_id && !x.from_me)
+                {
+                    return;
+                }
+                let message = DmMessage {
+                    id: m.message_id.clone(),
+                    from_me: false,
+                    content: m.content,
+                    timestamp: now_ms,
+                    status: None,
+                };
+                conv.messages.push(message.clone());
+                if !is_open {
+                    conv.unread += 1;
+                }
+                self.mesh_ack(from, PayloadType::Delivered, &m.message_id);
+                if is_open {
+                    self.mesh_ack(from, PayloadType::ReadReceipt, &m.message_id);
+                }
+                self.ui(UiEvent::Dm { peer, message });
+                self.emit_conversations();
+            }
+            PayloadType::Delivered | PayloadType::ReadReceipt => {
+                let Ok(id) = String::from_utf8(payload.data) else {
+                    return;
+                };
+                let status = if payload.kind == PayloadType::Delivered {
+                    DmStatus::Delivered
+                } else {
+                    DmStatus::Read
+                };
+                self.update_status(&peer, &id, status);
+            }
+            _ => {}
+        }
     }
 
     // ---- presence ----------------------------------------------------

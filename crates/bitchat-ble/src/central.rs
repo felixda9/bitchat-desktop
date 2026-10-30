@@ -12,11 +12,15 @@ use btleplug::api::{
 use btleplug::platform::{Adapter, Manager, Peripheral, PeripheralId};
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 pub type LinkId = u64;
+
+/// Never reused, even across restarts of the central.
+static NEXT_LINK: AtomicU64 = AtomicU64::new(1);
 
 /// iOS `bleMaxCentralLinks`.
 pub const MAX_LINKS: usize = 6;
@@ -115,7 +119,6 @@ struct State {
     writers: Writers,
     slots: HashMap<PeripheralId, Slot>,
     retry_at: HashMap<PeripheralId, Instant>,
-    next_link: LinkId,
     /// Recent connection attempts: when, and the link they became.
     attempts: Vec<(Instant, LinkId)>,
     /// Addresses taken to be a connected phone's new advertisement.
@@ -160,7 +163,6 @@ async fn run(events: mpsc::UnboundedSender<BleEvent>, writers: Writers) {
         writers,
         slots: HashMap::new(),
         retry_at: HashMap::new(),
-        next_link: 1,
         attempts: Vec::new(),
         presumed: HashMap::new(),
         seen: HashSet::new(),
@@ -291,8 +293,7 @@ impl State {
             .local_name
             .or(props.advertisement_name)
             .unwrap_or_else(|| props.address.to_string());
-        let link = self.next_link;
-        self.next_link += 1;
+        let link = NEXT_LINK.fetch_add(1, Ordering::Relaxed);
         self.slots.insert(id.clone(), Slot::Connecting(link));
         self.attempts.push((now, link));
         log::info!("ble: connecting to {name} (rssi {:?})", props.rssi);
