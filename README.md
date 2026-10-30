@@ -36,10 +36,10 @@ Works with bitchat **1.8** for iPhone and Mac and **2.2** for Android. The packe
 
 ## Requirements
 
-- **Windows 10 or 11** with a Bluetooth adapter. For location channels near you, turn on location for desktop apps in Windows settings.
-- **Linux** with BlueZ and a Bluetooth adapter. Location comes from GeoClue if it's available.
+- **Windows 10 or 11.** For location channels near you, turn on location for desktop apps in Windows settings.
+- **Linux** with BlueZ. Location comes from GeoClue if it's available.
 
-Without Bluetooth, everything that goes over the internet still works.
+The Bluetooth built into most laptops is all you need for `#mesh`; a desktop without Bluetooth can use any USB dongle. Without Bluetooth, everything that goes over the internet still works.
 
 ## Build
 
