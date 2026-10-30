@@ -47,7 +47,11 @@ fn is_incoming(address: [u8; 6]) -> bool {
 pub const MAX_LINKS: usize = 6;
 /// Ignore advertisers weaker than this (iOS `bleDynamicRSSIThresholdDefault`).
 pub const RSSI_THRESHOLD: i16 = -90;
+/// iOS waits 8 s; BlueZ often needs longer to reach an Android phone.
+#[cfg(not(target_os = "linux"))]
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+#[cfg(target_os = "linux")]
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const DISCOVER_TIMEOUT: Duration = Duration::from_secs(10);
 /// Wait this long after a failed attempt before trying the same device again.
 const RETRY_AFTER: Duration = Duration::from_secs(10);
