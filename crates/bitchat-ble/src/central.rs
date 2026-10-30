@@ -26,6 +26,23 @@ pub fn next_link_id() -> LinkId {
     NEXT_LINK.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Addresses of phones connected to our peripheral right now. Connecting
+/// out to the same address while it is connected in confuses the stack
+/// (seen with BlueZ and Android): both links drop.
+static INCOMING: Mutex<Vec<[u8; 6]>> = Mutex::new(Vec::new());
+
+pub(crate) fn note_incoming(address: [u8; 6], connected: bool) {
+    let mut list = INCOMING.lock().expect("incoming");
+    list.retain(|a| *a != address);
+    if connected {
+        list.push(address);
+    }
+}
+
+fn is_incoming(address: [u8; 6]) -> bool {
+    INCOMING.lock().expect("incoming").contains(&address)
+}
+
 /// iOS `bleMaxCentralLinks`.
 pub const MAX_LINKS: usize = 6;
 /// Ignore advertisers weaker than this (iOS `bleDynamicRSSIThresholdDefault`).
@@ -328,6 +345,9 @@ impl State {
             return;
         }
         if props.rssi.is_some_and(|r| r < RSSI_THRESHOLD) {
+            return;
+        }
+        if is_incoming(props.address.into_inner()) {
             return;
         }
         let name = props

@@ -101,6 +101,15 @@ mod winrt {
         by_device: HashMap<String, Client>,
     }
 
+    /// The phone's address: the part after the last '-' of the device ID.
+    fn address_of(device: &str) -> Option<[u8; 6]> {
+        let hex: String = device.rsplit('-').next()?.split(':').collect();
+        let bytes = (0..6)
+            .map(|i| u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok())
+            .collect::<Option<Vec<u8>>>()?;
+        bytes.try_into().ok()
+    }
+
     fn device_of(client: &GattSubscribedClient) -> Result<String> {
         Ok(client.Session()?.DeviceId()?.Id()?.to_string())
     }
@@ -205,6 +214,9 @@ mod winrt {
                     .collect();
                 for id in gone {
                     if let Some(c) = state.by_device.remove(&id) {
+                        if let Some(a) = address_of(&id) {
+                            crate::central::note_incoming(a, false);
+                        }
                         log::info!("ble: incoming link {} closed", c.link);
                         let _ = events.send(BleEvent::LinkDown { link: c.link });
                     }
@@ -214,6 +226,9 @@ mod winrt {
                         continue;
                     }
                     let link = next_link_id();
+                    if let Some(a) = address_of(&id) {
+                        crate::central::note_incoming(a, true);
+                    }
                     let max_write = client.MaxNotificationSize().unwrap_or(20) as usize;
                     log::info!(
                         "ble: incoming link {link} from {id}, notifications up to {max_write} bytes"
@@ -377,6 +392,7 @@ mod bluez {
                     let mut map = clients.lock().expect("clients");
                     let client = map.entry(req.device_address).or_insert_with(|| {
                         let link = next_link_id();
+                        crate::central::note_incoming(req.device_address.0, true);
                         let max_write = (req.mtu as usize).saturating_sub(3).max(20);
                         log::info!(
                             "ble: incoming link {link} from {}, writes up to {max_write} bytes",
@@ -498,6 +514,7 @@ mod bluez {
                         };
                         if !connected {
                             clients.lock().expect("clients").remove(&address);
+                            crate::central::note_incoming(address.0, false);
                             log::info!("ble: incoming link {link} closed");
                             let _ = events.send(BleEvent::LinkDown { link });
                         }
