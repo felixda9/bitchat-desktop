@@ -364,3 +364,61 @@ fn a_phone_linked_both_ways_keeps_both_links() {
     sim.run(300);
     assert_eq!(sim.public_texts(1).len(), 1, "delivered once");
 }
+
+fn carriers(sim: &Sim, node: usize) -> Vec<(PeerId, Vec<u8>, bool)> {
+    sim.events[node]
+        .iter()
+        .filter_map(|e| match e {
+            NodeEvent::Carrier {
+                from,
+                payload,
+                directed,
+            } => Some((*from, payload.clone(), *directed)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn carriers_reach_their_peer_or_everyone() {
+    let mut sim = line();
+    let (alice, carol) = (sim.id(0), sim.id(2));
+    // A large payload is fragmented on the way.
+    let deposit = vec![7u8; 900];
+    sim.act(0, |n, now| {
+        n.send_carrier(Some(carol), deposit.clone(), now)
+    });
+    sim.run(1_000);
+    assert_eq!(carriers(&sim, 2), vec![(alice, deposit, true)]);
+    assert!(
+        carriers(&sim, 1).is_empty(),
+        "bob only relays a directed carrier"
+    );
+
+    sim.act(2, |n, now| n.send_carrier(None, b"downlink".to_vec(), now));
+    sim.run(1_000);
+    for node in [0, 1] {
+        assert_eq!(
+            carriers(&sim, node),
+            vec![(carol, b"downlink".to_vec(), false)]
+        );
+    }
+}
+
+#[test]
+fn the_bridge_cell_rides_the_announce() {
+    let mut sim = line();
+    sim.act(1, |n, now| {
+        n.set_advertisement(
+            bitchat_mesh::announce::caps::BRIDGE | bitchat_mesh::announce::caps::GATEWAY,
+            Some("u4pruy".into()),
+            now,
+        )
+    });
+    sim.run(1_000);
+    let bob = sim.nodes[0].peer(&sim.id(1)).unwrap();
+    assert_eq!(bob.bridge_geohash.as_deref(), Some("u4pruy"));
+    assert_ne!(bob.capabilities & bitchat_mesh::announce::caps::BRIDGE, 0);
+    let bob = sim.nodes[2].peer(&sim.id(1)).unwrap();
+    assert_eq!(bob.bridge_geohash.as_deref(), Some("u4pruy"));
+}

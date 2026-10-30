@@ -209,6 +209,87 @@ fn export_rust_vectors() {
     write("embedded.json", &Value::Array(embedded_rows));
 
     export_mesh();
+    export_bridge();
+}
+
+/// Mesh-bridge carriers, stable message IDs and a signed directed carrier.
+fn export_bridge() {
+    use bitchat_nostr::bridge::{self, Carrier, Direction};
+    let keys = key(5);
+    let created_at = 1_790_000_000;
+    let content = "  hello from the rust bridge \n";
+    let event = bridge::mesh_event(
+        content,
+        "u4pruy",
+        &keys,
+        " rusty ",
+        "a1b2c3d4e5f60718",
+        1_790_000_000_456,
+        created_at,
+    );
+    let presence = bridge::presence_event("u4pruy", &keys, created_at);
+    let stable = bridge::stable_id("a1b2c3d4e5f60718", 1_790_000_000_456, content);
+    let mut carriers = Vec::new();
+    for (name, direction) in [
+        ("to_gateway", Direction::ToGateway),
+        ("from_gateway", Direction::FromGateway),
+        ("to_bridge", Direction::ToBridge),
+        ("from_bridge", Direction::FromBridge),
+    ] {
+        let c = Carrier::new(direction, "u4pruy", &event).unwrap();
+        carriers.push(json!({
+            "name": name, "carrier": hex::encode(c.encode()), "direction": direction as u8,
+            "geohash": "u4pruy", "event_id": event.id, "stable_id": stable,
+        }));
+    }
+    let c = Carrier::new(Direction::FromBridge, "u4pru", &presence).unwrap();
+    carriers.push(json!({
+        "name": "presence", "carrier": hex::encode(c.encode()), "direction": 4,
+        "geohash": "u4pru", "event_id": presence.id, "stable_id": null,
+    }));
+    let stable_ids: Vec<Value> = [
+        (
+            "A1B2C3D4E5F60718",
+            1_790_000_000_456u64,
+            "  hello from the rust bridge \n",
+        ),
+        ("0102030405060708", 0, ""),
+        (
+            "ffffffffffffffff",
+            1_790_000_000_000,
+            "\t emoji \u{1fac2} \u{e9}\u{2028}",
+        ),
+        ("00ff00ff00ff00ff", u64::MAX, "\u{a0}nbsp\u{3000}"),
+    ]
+    .iter()
+    .map(|(sender, ts, content)| {
+        json!({ "sender": sender, "timestamp_ms": ts, "content": content,
+                "id": bridge::stable_id(sender, *ts, content) })
+    })
+    .collect();
+
+    let id = MeshIdentity::new([0x24; 32], [0x42; 32]);
+    let deposit = Carrier::new(Direction::ToBridge, "u4pruy", &event)
+        .unwrap()
+        .encode();
+    let mut packet = bitchat_proto::Packet::new(
+        bitchat_proto::message_type::NOSTR_CARRIER,
+        id.peer_id(),
+        1_790_000_000_000,
+        deposit,
+        7,
+    );
+    packet.recipient_id = Some([1, 2, 3, 4, 5, 6, 7, 8]);
+    assert!(id.sign(&mut packet));
+    write(
+        "bridge.json",
+        &json!({
+            "carriers": carriers,
+            "stable_ids": stable_ids,
+            "directed_packet": hex::encode(packet.encode(false).unwrap()),
+            "signing_public": hex::encode(id.signing_public()),
+        }),
+    );
 }
 
 /// Signed mesh packets, GCS filters and sync requests for the Swift verifier.

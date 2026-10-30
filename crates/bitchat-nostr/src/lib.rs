@@ -1,5 +1,6 @@
 //! Nostr side of bitchat: events, private envelopes, location channels.
 
+pub mod bridge;
 pub mod embedded;
 pub mod envelope;
 pub mod event;

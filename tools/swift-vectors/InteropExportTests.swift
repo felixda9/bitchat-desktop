@@ -28,6 +28,7 @@ struct InteropExportTests {
         out["noise"] = try noise()
         out["sync"] = sync()
         out["mesh_signed"] = try meshSigned()
+        out["bridge"] = try bridge()
 
         let folder = URL(fileURLWithPath: dir).appendingPathComponent("swift")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -554,6 +555,101 @@ struct InteropExportTests {
     }
 
     // MARK: - Signed mesh packets
+
+    // MARK: - Mesh bridge
+
+    private func bridge() throws -> [String: Any] {
+        let identity = try key(5)
+        let event = try NostrProtocol.createBridgeMeshEvent(
+            content: "  hello across the bridge\n",
+            cell: "u4pruy",
+            senderIdentity: identity,
+            nickname: " alice ",
+            meshSenderID: "a1b2c3d4e5f60718",
+            meshTimestampMs: 1_790_000_000_123
+        )
+        #expect(event.isValidSignature())
+        let presence = try NostrProtocol.createBridgePresenceEvent(cell: "u4pruy", senderIdentity: identity)
+
+        let directions: [NostrCarrierPacket.Direction] = [.toGateway, .fromGateway, .toBridge, .fromBridge]
+        let carriers: [[String: Any]] = directions.map { direction in
+            let carrier = NostrCarrierPacket(direction: direction, geohash: "u4pruy", event: event)!
+            return [
+                "direction": Int(direction.rawValue),
+                "geohash": "u4pruy",
+                "event_json": String(data: carrier.eventJSON, encoding: .utf8)!,
+                "encoded": carrier.encode()!.hexEncodedString()
+            ]
+        }
+
+        let stableInputs: [(String, UInt64, String)] = [
+            ("A1B2C3D4E5F60718", 1_790_000_000_123, "  hello across the bridge\n"),
+            ("0102030405060708", 0, ""),
+            ("ffffffffffffffff", 1_790_000_000_000, "\t emoji 🫂 é\u{2028}"),
+            ("00ff00ff00ff00ff", 18_446_744_073_709_551_615, "\u{00a0}nbsp\u{3000}")
+        ]
+        let stableIDs: [[String: Any]] = stableInputs.map { item in
+            [
+                "sender": item.0,
+                "timestamp_ms": NSNumber(value: item.1),
+                "content": item.2,
+                "id": MeshMessageIdentity.stableID(senderIDHex: item.0, timestampMs: item.1, content: item.2)
+            ]
+        }
+
+        // TLV edge cases: what Swift's decoder accepts.
+        let json = Data("{}".utf8)
+        func tlv(_ type: UInt8, _ value: Data) -> Data {
+            Data([type, UInt8(value.count >> 8), UInt8(value.count & 0xff)]) + value
+        }
+        let good = tlv(1, Data([3])) + tlv(2, Data("u4pruy".utf8)) + tlv(3, json)
+        let decodeInputs: [(String, Data)] = [
+            ("ok", good),
+            ("unknown_tlv_skipped", tlv(9, Data([1, 2, 3])) + good),
+            ("trailing_byte", good + Data([0])),
+            ("truncated", Data(good.dropLast())),
+            ("bad_direction", tlv(1, Data([5])) + tlv(2, Data("u4pruy".utf8)) + tlv(3, json)),
+            ("long_direction", tlv(1, Data([3, 0])) + tlv(2, Data("u4pruy".utf8)) + tlv(3, json)),
+            ("no_event", tlv(1, Data([3])) + tlv(2, Data("u4pruy".utf8))),
+            ("empty_geohash", tlv(1, Data([3])) + tlv(2, Data()) + tlv(3, json)),
+            ("long_geohash", tlv(1, Data([3])) + tlv(2, Data("u4pruyu4pruyu".utf8)) + tlv(3, json)),
+            ("bad_utf8", tlv(1, Data([3])) + tlv(2, Data([0xff])) + tlv(3, json)),
+            ("last_wins", tlv(1, Data([1])) + good)
+        ]
+        let decodeCases: [[String: Any]] = decodeInputs.map { item in
+            let decoded = NostrCarrierPacket.decode(item.1)
+            return [
+                "name": item.0,
+                "data": item.1.hexEncodedString(),
+                "direction": decoded.map { Int($0.direction.rawValue) as Any } ?? NSNull()
+            ]
+        }
+
+        // A signed, directed carrier packet as BLEService.sendNostrCarrier builds it.
+        let signing = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x42, count: 32))
+        let noise = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: Data(repeating: 0x24, count: 32))
+        let senderID = Data(hexString: PeerID(publicKey: noise.publicKey.rawRepresentation).id)!
+        let deposit = NostrCarrierPacket(direction: .toBridge, geohash: "u4pruy", event: event)!.encode()!
+        var packet = BitchatPacket(
+            type: MessageType.nostrCarrier.rawValue, senderID: senderID,
+            recipientID: Data(hexString: "0102030405060708")!,
+            timestamp: 1_790_000_000_000, payload: deposit, signature: nil, ttl: 7
+        )
+        packet.signature = try signing.signature(for: packet.toBinaryDataForSigning()!)
+
+        return [
+            "mesh_event": eventDict(event),
+            "presence_event": eventDict(presence),
+            "carriers": carriers,
+            "stable_ids": stableIDs,
+            "decode": decodeCases,
+            "directed_packet": [
+                "wire": optionalHex(packet.toBinaryData(padding: false)),
+                "signing_public": signing.publicKey.rawRepresentation.hexEncodedString(),
+                "payload": deposit.hexEncodedString()
+            ]
+        ]
+    }
 
     private func meshSigned() throws -> [[String: Any]] {
         let signing = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x42, count: 32))

@@ -244,3 +244,17 @@ fn swift_signed_packets_verify_and_match_our_preimages() {
         }
     }
 }
+
+#[test]
+fn swift_directed_carrier_verifies() {
+    let e = export();
+    let Some(p) = e.get("bridge").map(|b| b["directed_packet"].clone()) else {
+        eprintln!("no Swift bridge vectors yet; skipped");
+        return;
+    };
+    let packet = Packet::decode(&bytes(&p["wire"])).unwrap();
+    assert_eq!(packet.packet_type, t::NOSTR_CARRIER);
+    assert_eq!(packet.recipient_id, Some([1, 2, 3, 4, 5, 6, 7, 8]));
+    assert_eq!(packet.payload, bytes(&p["payload"]));
+    assert!(verify(&packet, &bytes(&p["signing_public"])));
+}

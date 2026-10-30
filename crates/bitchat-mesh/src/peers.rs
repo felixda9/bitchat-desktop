@@ -25,6 +25,8 @@ pub struct Peer {
     pub noise_public: [u8; 32],
     pub signing_public: [u8; 32],
     pub capabilities: u64,
+    /// Mesh-bridge rendezvous cell the peer advertises.
+    pub bridge_geohash: Option<String>,
     pub neighbors: Vec<PeerId>,
     /// Last verified announce (unix ms, local clock).
     pub last_seen_ms: u64,
@@ -153,6 +155,7 @@ impl PeerTable {
             noise_public: noise,
             signing_public: signing,
             capabilities: a.capabilities.unwrap_or(0),
+            bridge_geohash: a.bridge_geohash,
             neighbors: a.neighbors.unwrap_or_default(),
             last_seen_ms: now_ms,
             direct: packet.ttl == DEFAULT_TTL,

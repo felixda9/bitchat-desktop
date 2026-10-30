@@ -159,6 +159,21 @@ impl Cli {
                     payloads.len()
                 )
             }
+            NodeEvent::Carrier {
+                from,
+                payload,
+                directed,
+            } => {
+                // TLV 01 (direction) comes first.
+                let direction = payload.get(3).copied().unwrap_or(0);
+                println!(
+                    "{} [carrier] {} from {} ({} bytes, direction {direction})",
+                    stamp(),
+                    if directed { "deposit" } else { "broadcast" },
+                    self.name(&from),
+                    payload.len()
+                )
+            }
         }
     }
 

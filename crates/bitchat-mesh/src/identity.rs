@@ -75,13 +75,25 @@ impl MeshIdentity {
         capabilities: u64,
         timestamp_ms: u64,
     ) -> Option<Packet> {
+        self.announce_with_cell(nickname, neighbors, capabilities, None, timestamp_ms)
+    }
+
+    /// Announce that also advertises our mesh-bridge rendezvous cell.
+    pub fn announce_with_cell(
+        &self,
+        nickname: &str,
+        neighbors: &[[u8; 8]],
+        capabilities: u64,
+        bridge_geohash: Option<&str>,
+        timestamp_ms: u64,
+    ) -> Option<Packet> {
         let payload = Announce {
             nickname: nickname.to_string(),
             noise_public: self.noise_public.to_vec(),
             signing_public: self.signing_public().to_vec(),
             neighbors: (!neighbors.is_empty()).then(|| neighbors.to_vec()),
             capabilities: Some(capabilities),
-            bridge_geohash: None,
+            bridge_geohash: bridge_geohash.map(str::to_string),
         }
         .encode()?;
         self.signed(t::ANNOUNCE, payload, timestamp_ms)

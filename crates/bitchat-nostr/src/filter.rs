@@ -42,6 +42,17 @@ impl Filter {
         }
     }
 
+    /// Mesh-bridge rendezvous (kinds 20000/20001, `#r` cells).
+    pub fn bridge_rendezvous(cells: &[String], since: Option<i64>, limit: u32) -> Filter {
+        Filter {
+            kinds: Some(vec![kind::EPHEMERAL, kind::GEOHASH_PRESENCE]),
+            since,
+            limit: Some(limit),
+            tags: [("r".to_string(), cells.to_vec())].into(),
+            ..Default::default()
+        }
+    }
+
     /// Location notes (kind 1) for one or more geohashes.
     pub fn geohash_notes(geohashes: &[String], since: Option<i64>, limit: u32) -> Filter {
         Filter {

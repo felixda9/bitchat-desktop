@@ -67,6 +67,14 @@ pub enum NodeEvent {
         peer: PeerId,
         payloads: Vec<Vec<u8>>,
     },
+    /// A Nostr carrier (type 0x28) payload. `directed` ones were addressed
+    /// to us and signed by the sender's announced key; broadcasts are not
+    /// signed (the carried event is).
+    Carrier {
+        from: PeerId,
+        payload: Vec<u8>,
+        directed: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,6 +110,9 @@ struct Link {
 pub struct MeshNode {
     identity: MeshIdentity,
     nickname: String,
+    /// Runtime capability bits and bridge cell we advertise.
+    capabilities: u64,
+    bridge_geohash: Option<String>,
     peers: PeerTable,
     sessions: SessionManager,
     dedup: Deduplicator,
@@ -152,6 +163,8 @@ impl MeshNode {
         };
         MeshNode {
             nickname: nickname.to_string(),
+            capabilities: 0,
+            bridge_geohash: None,
             peers: PeerTable::new(local),
             sessions: SessionManager::new(*identity.noise_secret(), &state),
             dedup: Deduplicator::default(),
@@ -245,6 +258,51 @@ impl MeshNode {
     pub fn set_nickname(&mut self, nickname: &str, now_ms: u64) -> Vec<Output> {
         self.nickname = nickname.to_string();
         self.announce(now_ms, true);
+        self.take()
+    }
+
+    /// Capability bits and bridge cell for our announces; a change is
+    /// announced right away so peers learn it promptly.
+    pub fn set_advertisement(
+        &mut self,
+        capabilities: u64,
+        bridge_geohash: Option<String>,
+        now_ms: u64,
+    ) -> Vec<Output> {
+        if capabilities != self.capabilities || bridge_geohash != self.bridge_geohash {
+            self.capabilities = capabilities;
+            self.bridge_geohash = bridge_geohash;
+            self.announce(now_ms, true);
+        }
+        self.take()
+    }
+
+    /// Sends a Nostr carrier: to one peer (signed, so it can rate-limit us)
+    /// or to everyone (unsigned). TTL 7 either way.
+    pub fn send_carrier(
+        &mut self,
+        to: Option<PeerId>,
+        payload: Vec<u8>,
+        now_ms: u64,
+    ) -> Vec<Output> {
+        let mut packet = Packet::new(
+            t::NOSTR_CARRIER,
+            self.peer_id(),
+            now_ms,
+            payload,
+            DEFAULT_TTL,
+        );
+        if let Some(peer) = to {
+            if self.peers.get(&peer).is_none() {
+                return self.take();
+            }
+            packet.recipient_id = Some(peer);
+            if !self.identity.sign(&mut packet) {
+                return self.take();
+            }
+        }
+        self.dedup.mark(PacketKey::of(&packet), now_ms);
+        self.transmit(packet, None, to);
         self.take()
     }
 
@@ -394,6 +452,10 @@ impl MeshNode {
                 self.handle_request_sync(&packet, now_ms);
                 false
             }
+            t::NOSTR_CARRIER => {
+                self.handle_carrier(&packet);
+                true
+            }
             // Broadcast media that fails sender checks must not spread.
             t::FILE_TRANSFER | t::BOARD_POST | t::VOICE_FRAME => {
                 let directed = packet.recipient_id.is_some_and(|r| r != BROADCAST);
@@ -520,6 +582,29 @@ impl MeshNode {
         });
     }
 
+    /// Carriers addressed elsewhere are only relayed. One addressed to us
+    /// must be signed by its sender (who may be several hops away).
+    fn handle_carrier(&mut self, packet: &Packet) {
+        let directed = match packet.recipient_id {
+            Some(r) if r != self.peer_id() => return,
+            Some(_) => {
+                let Some(key) = self.peers.get(&packet.sender_id).map(|p| p.signing_public) else {
+                    return;
+                };
+                if !verify(packet, &key) {
+                    return;
+                }
+                true
+            }
+            None => false,
+        };
+        self.emit(NodeEvent::Carrier {
+            from: packet.sender_id,
+            payload: packet.payload.clone(),
+            directed,
+        });
+    }
+
     /// Only a leave signed by the peer counts (and spreads).
     fn handle_leave(&mut self, packet: &Packet) -> bool {
         let Some(peer) = self.peers.on_leave(packet) else {
@@ -590,10 +675,13 @@ impl MeshNode {
             }
         }
         let neighbors = self.peers.direct_neighbors();
-        let Some(packet) = self
-            .identity
-            .announce(&self.nickname, &neighbors, 0, now_ms)
-        else {
+        let Some(packet) = self.identity.announce_with_cell(
+            &self.nickname,
+            &neighbors,
+            self.capabilities,
+            self.bridge_geohash.as_deref(),
+            now_ms,
+        ) else {
             return;
         };
         let jitter = u64::from(u32::from_le_bytes(random_bytes())) % (ANNOUNCE_JITTER_MS + 1);

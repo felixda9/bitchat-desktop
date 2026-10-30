@@ -114,6 +114,62 @@ struct InteropVerifyTests {
         let fragment_ids: String?
     }
 
+    private struct BridgeCarrierCase: Decodable {
+        let name: String
+        let carrier: String
+        let direction: UInt8
+        let geohash: String
+        let event_id: String
+        let stable_id: String?
+    }
+
+    private struct StableIDCase: Decodable {
+        let sender: String
+        let timestamp_ms: UInt64
+        let content: String
+        let id: String
+    }
+
+    private struct BridgeVectors: Decodable {
+        let carriers: [BridgeCarrierCase]
+        let stable_ids: [StableIDCase]
+        let directed_packet: String
+        let signing_public: String
+    }
+
+    @Test func rustBridgeCarriersDecodeInSwift() throws {
+        guard let vectors = try load("bridge.json", as: BridgeVectors.self) else { return }
+        #expect(!vectors.carriers.isEmpty)
+        for item in vectors.carriers {
+            let bytes = try #require(Data(hexString: item.carrier))
+            let carrier = try #require(NostrCarrierPacket.decode(bytes), "\(item.name)")
+            #expect(carrier.direction.rawValue == item.direction, "\(item.name)")
+            #expect(carrier.geohash == item.geohash, "\(item.name)")
+            let event = try #require(carrier.event(), "\(item.name)")
+            #expect(event.id == item.event_id, "\(item.name)")
+            #expect(event.isValidSignature(), "\(item.name)")
+            if let stable = item.stable_id {
+                let m = try #require(event.tags.first { $0.count >= 4 && $0[0] == "m" })
+                #expect(m[1] == stable)
+                let ts = try #require(UInt64(m[3]))
+                #expect(MeshMessageIdentity.stableID(senderIDHex: m[2], timestampMs: ts, content: event.content) == stable)
+            }
+        }
+        for item in vectors.stable_ids {
+            #expect(MeshMessageIdentity.stableID(senderIDHex: item.sender, timestampMs: item.timestamp_ms, content: item.content) == item.id)
+        }
+        let wire = try #require(Data(hexString: vectors.directed_packet))
+        let packet = try #require(BitchatPacket.from(wire))
+        #expect(packet.type == MessageType.nostrCarrier.rawValue)
+        #expect(packet.recipientID != nil)
+        let signature = try #require(packet.signature)
+        let signingPublic = try #require(Data(hexString: vectors.signing_public))
+        let key = try Curve25519.Signing.PublicKey(rawRepresentation: signingPublic)
+        let preimage = try #require(packet.toBinaryDataForSigning())
+        #expect(key.isValidSignature(signature, for: preimage))
+        #expect(NostrCarrierPacket.decode(packet.payload)?.direction == .toBridge)
+    }
+
     private struct MeshVectors: Decodable {
         let packets: [MeshPacketCase]
         let gcs: [GcsCase]
