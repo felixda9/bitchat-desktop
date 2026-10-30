@@ -55,7 +55,7 @@
     {#each app.people.list.filter((p) => !p.bridged) as p (p.pubkey)}
       <li>
         <button disabled={p.me} style:color={colorFor(p.pubkey)} onclick={() => api.openDm(p.pubkey)}>
-          {#if p.favorite}★ {/if}{p.display}{#if p.me} (you){/if}{#if p.teleported} ↗{/if}
+          {#if p.favorite}★&nbsp;{/if}{p.display}{#if p.me}&nbsp;(you){/if}{#if p.teleported}&nbsp;↗{/if}
         </button>
       </li>
     {/each}
