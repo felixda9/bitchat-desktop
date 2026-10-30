@@ -104,7 +104,11 @@
       autocomplete="off"
     />
     {#if canSendImage}
-      <button class="attach" title="send an image" onclick={() => picker?.click()}>📷</button>
+      <button class="attach" title="attach an image" aria-label="attach an image" onclick={() => picker?.click()}>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M21.4 11.1l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8" />
+        </svg>
+      </button>
       <input bind:this={picker} type="file" accept="image/*" hidden onchange={picked} />
     {/if}
     {#if app.dm && !text.startsWith("/")}
@@ -154,13 +158,23 @@
   .attach {
     background: none;
     border: none;
-    font: inherit;
     cursor: pointer;
     padding: 0 2px;
-    opacity: 0.8;
+    color: var(--muted);
+    display: grid;
+    place-items: center;
   }
   .attach:hover {
-    opacity: 1;
+    color: var(--accent);
+  }
+  .attach svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
   .scope {
     background: none;
