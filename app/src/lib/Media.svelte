@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { MediaRef } from "./api";
   import { mediaUrl } from "./media";
+  import VoiceNote from "./VoiceNote.svelte";
 
   let { media }: { media: MediaRef } = $props();
   let url = $state<string | null>(null);
@@ -23,7 +24,7 @@
     <img src={url} alt="" />
   </button>
 {:else if media.kind === "audio"}
-  <audio controls preload="metadata" src={url}></audio>
+  <VoiceNote {url} />
 {:else}
   <a href={url} download={media.name ?? "file"}>📎 {media.name ?? "file"}</a>
 {/if}
@@ -49,11 +50,6 @@
   .big img {
     max-width: 100%;
     max-height: 70vh;
-  }
-  audio {
-    display: block;
-    margin: 4px 0;
-    height: 36px;
   }
   .muted {
     color: var(--muted);
