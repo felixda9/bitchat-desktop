@@ -51,9 +51,20 @@ export function handle(e: UiEvent) {
     case "channel":
       app.channel = e.geohash ? { geohash: e.geohash, level: e.level ?? "", teleported: e.teleported } : null;
       break;
-    case "public":
-      pushTimeline({ kind: "public", message: e.message });
+    case "public": {
+      // In time order: Bluetooth copies of older messages (sync, or one
+      // replacing its bridged copy) go back where they belong.
+      const t = app.timeline;
+      let i = t.length;
+      while (i > 0) {
+        const prev = t[i - 1];
+        if ((prev.kind === "public" ? prev.message.timestamp : prev.timestamp) <= e.message.timestamp) break;
+        i--;
+      }
+      if (i === t.length) pushTimeline({ kind: "public", message: e.message });
+      else t.splice(i, 0, { kind: "public", message: e.message });
       break;
+    }
     case "system": {
       const line = { kind: "system" as const, text: e.text, timestamp: Date.now() };
       if (app.dm) app.dm.lines.push(line);
