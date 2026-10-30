@@ -7,6 +7,8 @@
 use crate::central::{BleEvent, LinkId};
 use tokio::sync::mpsc;
 
+// Only the Windows peripheral reads these so far.
+#[cfg_attr(not(windows), allow(dead_code))]
 enum Cmd {
     Notify(LinkId, Vec<u8>),
 }
