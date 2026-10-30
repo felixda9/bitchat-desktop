@@ -19,8 +19,12 @@ use tokio::sync::mpsc;
 
 pub type LinkId = u64;
 
-/// Never reused, even across restarts of the central.
+/// Never reused, even across restarts, and shared with the peripheral.
 static NEXT_LINK: AtomicU64 = AtomicU64::new(1);
+
+pub fn next_link_id() -> LinkId {
+    NEXT_LINK.fetch_add(1, Ordering::Relaxed)
+}
 
 /// iOS `bleMaxCentralLinks`.
 pub const MAX_LINKS: usize = 6;
@@ -64,6 +68,8 @@ pub enum BleEvent {
         /// Largest frame to write in one go.
         max_write: usize,
         name: String,
+        /// The phone connected to us (we are the peripheral).
+        incoming: bool,
     },
     LinkDown {
         link: LinkId,
@@ -328,7 +334,7 @@ impl State {
             .local_name
             .or(props.advertisement_name)
             .unwrap_or_else(|| props.address.to_string());
-        let link = NEXT_LINK.fetch_add(1, Ordering::Relaxed);
+        let link = next_link_id();
         self.slots.insert(id.clone(), Slot::Connecting(link));
         self.attempts.push((now, link));
         log::info!("ble: connecting to {name} (rssi {:?})", props.rssi);
@@ -482,6 +488,7 @@ async fn connect(
         link,
         max_write,
         name: name.clone(),
+        incoming: false,
     });
 
     let writer = {

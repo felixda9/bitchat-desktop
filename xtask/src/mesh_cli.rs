@@ -3,11 +3,12 @@
 //! sent: plain text goes to the mesh, `/dm <name> text` is a private message.
 
 use bitchat_ble::central::{BleEvent, Central};
+use bitchat_ble::peripheral::Peripheral;
 use bitchat_mesh::MeshIdentity;
-use bitchat_mesh::node::{MeshNode, NodeEvent, Output};
+use bitchat_mesh::node::{LinkRole, MeshNode, NodeEvent, Output};
 use bitchat_proto::PeerId;
 use bitchat_proto::payload::{NoisePayload, PayloadType, PrivateMessage};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -61,6 +62,8 @@ fn message_id() -> String {
 struct Cli {
     node: MeshNode,
     central: Central,
+    peripheral: Peripheral,
+    incoming: HashSet<u64>,
     names: HashMap<PeerId, String>,
 }
 
@@ -94,7 +97,11 @@ impl Cli {
                             frame.len()
                         );
                     }
-                    self.central.write(link, frame)
+                    if self.incoming.contains(&link) {
+                        self.peripheral.write(link, frame)
+                    } else {
+                        self.central.write(link, frame)
+                    }
                 }
                 Output::Close { link } => self.central.close(link),
                 Output::Event(event) => self.event(event),
@@ -245,10 +252,17 @@ pub fn run(args: &[String]) {
         .unwrap();
     rt.block_on(async move {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let peripheral = Peripheral::start(tx.clone());
         let central = Central::start(tx);
         let identity = identity();
         println!("{} me: {nickname}#{} ({})", stamp(), &hex::encode(identity.peer_id())[..4], hex::encode(identity.peer_id()));
-        let mut cli = Cli { node: MeshNode::new(identity, &nickname, now_ms()), central, names: HashMap::new() };
+        let mut cli = Cli {
+            node: MeshNode::new(identity, &nickname, now_ms()),
+            central,
+            peripheral,
+            incoming: HashSet::new(),
+            names: HashMap::new(),
+        };
 
         // Read stdin lines (when interactive) and the inbox file.
         let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -288,12 +302,20 @@ pub fn run(args: &[String]) {
             tokio::select! {
                 Some(event) = rx.recv() => match event {
                     BleEvent::Status(s) => println!("{} [ble] {s:?}", stamp()),
-                    BleEvent::LinkUp { link, max_write, name } => {
-                        println!("{} [ble] link {link} up: {name} (writes up to {max_write} bytes)", stamp());
-                        let out = cli.node.link_up(link, max_write, now_ms());
+                    BleEvent::LinkUp { link, max_write, name, incoming } => {
+                        let side = if incoming { "incoming" } else { "outgoing" };
+                        println!("{} [ble] link {link} up ({side}): {name} (writes up to {max_write} bytes)", stamp());
+                        let role = if incoming {
+                            cli.incoming.insert(link);
+                            LinkRole::Incoming
+                        } else {
+                            LinkRole::Outgoing
+                        };
+                        let out = cli.node.link_up_as(link, max_write, role, now_ms());
                         cli.apply(out);
                     }
                     BleEvent::LinkDown { link } => {
+                        cli.incoming.remove(&link);
                         println!("{} [ble] link {link} down", stamp());
                         let out = cli.node.link_down(link);
                         cli.apply(out);

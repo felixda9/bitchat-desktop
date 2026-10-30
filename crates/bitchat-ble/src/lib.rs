@@ -4,6 +4,8 @@ use uuid::{Uuid, uuid};
 
 pub mod assembler;
 pub mod central;
+pub mod peripheral;
+pub mod writes;
 
 /// bitchat GATT service (release builds; iOS debug builds use `…4B5A`).
 pub const SERVICE_UUID: Uuid = uuid!("F47B5E2D-4A9E-4C5A-9B3F-8E1D2C3A4B5C");

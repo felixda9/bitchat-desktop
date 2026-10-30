@@ -1,7 +1,7 @@
 //! Loopback mesh: several nodes wired together in memory, on a virtual clock.
 
 use bitchat_mesh::MeshIdentity;
-use bitchat_mesh::node::{LinkId, MeshNode, NodeEvent, Output};
+use bitchat_mesh::node::{LinkId, LinkRole, MeshNode, NodeEvent, Output};
 use bitchat_proto::PeerId;
 use std::collections::{HashMap, VecDeque};
 
@@ -334,4 +334,33 @@ fn connected_neighbours_stay_without_announces() {
             .iter()
             .any(|e| matches!(e, NodeEvent::PeerLeft(_)))
     );
+}
+
+#[test]
+fn a_phone_linked_both_ways_keeps_both_links() {
+    let mut sim = Sim::new(&["alice", "bob"], 512);
+    // Alice connected to Bob, and Bob connected to Alice: one link each way.
+    let (la, lb) = (sim.next_link, sim.next_link + 1);
+    sim.next_link += 2;
+    sim.wires.insert((0, la), (1, lb));
+    sim.wires.insert((1, lb), (0, la));
+    let out = sim.nodes[0].link_up(la, 512, sim.now);
+    sim.handle(0, out);
+    let out = sim.nodes[1].link_up_as(lb, 512, LinkRole::Incoming, sim.now);
+    sim.handle(1, out);
+    sim.settle();
+    let (lc, ld) = (sim.next_link, sim.next_link + 1);
+    sim.next_link += 2;
+    sim.wires.insert((1, lc), (0, ld));
+    sim.wires.insert((0, ld), (1, lc));
+    let out = sim.nodes[1].link_up(lc, 512, sim.now);
+    sim.handle(1, out);
+    let out = sim.nodes[0].link_up_as(ld, 512, LinkRole::Incoming, sim.now);
+    sim.handle(0, out);
+    sim.settle();
+    sim.run(1_000);
+    assert_eq!(sim.wires.len(), 4, "no link was closed");
+    sim.act(0, |n, now| n.send_public("both ways", now));
+    sim.run(300);
+    assert_eq!(sim.public_texts(1).len(), 1, "delivered once");
 }

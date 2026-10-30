@@ -15,6 +15,7 @@ fn main() {
         "export-rust-vectors" => export_rust_vectors(),
         "geo-watch" => geo_watch(std::env::args().nth(2).unwrap_or_default()),
         "mesh" => mesh_cli::run(&std::env::args().skip(2).collect::<Vec<_>>()),
+        "ble-info" => ble_info(),
         _ => {
             eprintln!(
                 "usage: cargo xtask export-rust-vectors | geo-watch <geohash> | mesh [nickname] [--inbox FILE]"
@@ -350,4 +351,39 @@ fn geo_watch(geohash: String) {
             }
         }
     });
+}
+
+/// What the Bluetooth adapter can do (peripheral role is needed to advertise).
+#[cfg(windows)]
+fn ble_info() {
+    use windows::Devices::Bluetooth::BluetoothAdapter;
+    let adapter = BluetoothAdapter::GetDefaultAsync()
+        .and_then(|op| op.join())
+        .expect("no Bluetooth adapter");
+    let yes = |r: windows::core::Result<bool>| r.map_or("?".to_string(), |b| b.to_string());
+    println!(
+        "low energy:            {}",
+        yes(adapter.IsLowEnergySupported())
+    );
+    println!(
+        "central role:          {}",
+        yes(adapter.IsCentralRoleSupported())
+    );
+    println!(
+        "peripheral role:       {}",
+        yes(adapter.IsPeripheralRoleSupported())
+    );
+    println!(
+        "advertisement offload: {}",
+        yes(adapter.IsAdvertisementOffloadSupported())
+    );
+    println!(
+        "extended advertising:  {}",
+        yes(adapter.IsExtendedAdvertisingSupported())
+    );
+}
+
+#[cfg(not(windows))]
+fn ble_info() {
+    eprintln!("ble-info is Windows only; on Linux use `bluetoothctl show`");
 }

@@ -6,14 +6,15 @@ use crate::engine::{Effect, Engine, MeshPeer, MineRequest};
 use crate::model::UiEvent;
 use crate::state::State;
 use crate::storage::{Storage, StorageError};
-use bitchat_ble::central::{BleEvent, BleStatus, Central};
+use bitchat_ble::central::{BleEvent, BleStatus, Central, LinkId};
+use bitchat_ble::peripheral::Peripheral;
 use bitchat_mesh::MeshIdentity;
-use bitchat_mesh::node::{MeshNode, Output};
+use bitchat_mesh::node::{LinkRole, MeshNode, Output};
 use bitchat_nostr::event::kind;
 use bitchat_nostr::net::{Dialer, PoolEvent, RelayPool, Tor, TorStatus, http};
 use bitchat_nostr::pow;
 use bitchat_nostr::relay_directory::{self, Directory};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -138,6 +139,9 @@ struct Runner {
     dir_tx: mpsc::UnboundedSender<Vec<u8>>,
     mesh: MeshNode,
     central: Option<Central>,
+    peripheral: Option<Peripheral>,
+    /// Links phones opened to us (sent to through the peripheral).
+    incoming: HashSet<LinkId>,
     ble_tx: mpsc::UnboundedSender<BleEvent>,
     /// Last radio state, replayed when the UI reconnects.
     radio: (String, usize),
@@ -256,7 +260,11 @@ impl Runner {
         for output in outputs {
             match output {
                 Output::Write { link, frame } => {
-                    if let Some(c) = &self.central {
+                    if self.incoming.contains(&link) {
+                        if let Some(p) = &self.peripheral {
+                            p.write(link, frame);
+                        }
+                    } else if let Some(c) = &self.central {
                         c.write(link, frame);
                     }
                 }
@@ -308,12 +316,20 @@ impl Runner {
                 link,
                 max_write,
                 name,
+                incoming,
             } => {
-                log::info!("mesh link {link} up: {name}");
-                let out = self.mesh.link_up(link, max_write, now);
+                log::info!("mesh link {link} up: {name} (incoming: {incoming})");
+                let role = if incoming {
+                    self.incoming.insert(link);
+                    LinkRole::Incoming
+                } else {
+                    LinkRole::Outgoing
+                };
+                let out = self.mesh.link_up_as(link, max_write, role, now);
                 self.apply_mesh(out);
             }
             BleEvent::LinkDown { link } => {
+                self.incoming.remove(&link);
                 let out = self.mesh.link_down(link);
                 self.apply_mesh(out);
                 self.sync_mesh_peers();
@@ -418,6 +434,8 @@ impl Runner {
         self.pool.close_all();
         // Drop every Bluetooth link; the new identity reconnects from scratch.
         self.central = None;
+        self.peripheral = None;
+        self.incoming.clear();
         self.mine_queue.clear();
         let _ = self.engine.take_effects();
         if let Err(e) = self.storage.wipe() {
@@ -431,6 +449,7 @@ impl Runner {
         self.mesh = mesh_node(&state);
         self.engine = Engine::new(state, self.storage.key_in_keychain());
         self.central = Some(Central::start(self.ble_tx.clone()));
+        self.peripheral = Some(Peripheral::start(self.ble_tx.clone()));
         if tor_enabled {
             self.start_tor();
         }
@@ -521,10 +540,13 @@ async fn run(
         dir_tx,
         mesh,
         central: None,
+        peripheral: None,
+        incoming: HashSet::new(),
         ble_tx: ble_tx.clone(),
         radio: ("starting".into(), 0),
         mesh_ticks: 0,
     };
+    runner.peripheral = Some(Peripheral::start(ble_tx.clone()));
     runner.central = Some(Central::start(ble_tx));
     if runner.engine.state.tor_enabled {
         runner.start_tor();

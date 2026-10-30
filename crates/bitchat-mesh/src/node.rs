@@ -82,8 +82,19 @@ pub enum Output {
     Event(NodeEvent),
 }
 
+/// Who opened a link. A phone is often linked both ways at once (each side
+/// is central and peripheral); that is normal, not a duplicate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkRole {
+    /// We connected to them (we are the central).
+    Outgoing,
+    /// They connected to us (we are the peripheral).
+    Incoming,
+}
+
 struct Link {
     max_write: usize,
+    role: LinkRole,
     /// Bound by a verified direct announce received on this link.
     peer: Option<PeerId>,
 }
@@ -193,12 +204,23 @@ impl MeshNode {
 
     // --- inputs ---
 
-    /// A new connection; `max_write` is the largest frame it takes.
+    /// A new connection we opened; `max_write` is the largest frame it takes.
     pub fn link_up(&mut self, link: LinkId, max_write: usize, now_ms: u64) -> Vec<Output> {
+        self.link_up_as(link, max_write, LinkRole::Outgoing, now_ms)
+    }
+
+    pub fn link_up_as(
+        &mut self,
+        link: LinkId,
+        max_write: usize,
+        role: LinkRole,
+        now_ms: u64,
+    ) -> Vec<Output> {
         self.links.insert(
             link,
             Link {
                 max_write,
+                role,
                 peer: None,
             },
         );
@@ -422,16 +444,20 @@ impl MeshNode {
     }
 
     /// iOS `BLERedundantLinkPolicy`: a phone that changed its address can sit
-    /// on several links at once. Keep the newest connection, close the rest.
+    /// on several of our outgoing links at once. Keep the newest, close the
+    /// rest. Links the phone opened to us are its to manage.
     fn bind(&mut self, link: LinkId, peer: PeerId) {
         let Some(l) = self.links.get_mut(&link) else {
             return;
         };
         l.peer = Some(peer);
+        if l.role != LinkRole::Outgoing {
+            return;
+        }
         let same: Vec<LinkId> = self
             .links
             .iter()
-            .filter(|(_, l)| l.peer == Some(peer))
+            .filter(|(_, l)| l.peer == Some(peer) && l.role == LinkRole::Outgoing)
             .map(|(id, _)| *id)
             .collect();
         let newest = same.iter().copied().max().unwrap_or(link);
@@ -688,13 +714,20 @@ impl MeshNode {
         let ingress_peer = ingress
             .and_then(|l| self.links.get(&l))
             .and_then(|l| l.peer);
-        let allowed: Vec<(LinkId, Option<PeerId>)> = self
+        // Outgoing links first: per peer, the one we opened is preferred
+        // (iOS keeps the write side; notifications share one queue).
+        let mut allowed: Vec<(LinkId, Option<PeerId>, LinkRole)> = self
             .links
             .iter()
             .filter(|(id, l)| {
                 Some(**id) != ingress && (ingress_peer.is_none() || l.peer != ingress_peer)
             })
-            .map(|(id, l)| (*id, l.peer))
+            .map(|(id, l)| (*id, l.peer, l.role))
+            .collect();
+        allowed.sort_by_key(|(id, _, role)| (*role != LinkRole::Outgoing, *id));
+        let allowed: Vec<(LinkId, Option<PeerId>)> = allowed
+            .into_iter()
+            .map(|(id, peer, _)| (id, peer))
             .collect();
 
         let hint = to.or(packet.recipient_id);
