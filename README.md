@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="bitchat-desktop in the #mesh channel" width="820">
+  <img src="docs/screenshot-mesh.png" alt="bitchat-desktop in the #mesh channel" width="820">
 </p>
 
 ## What works
