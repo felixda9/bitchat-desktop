@@ -491,7 +491,7 @@ async fn connect(
         incoming: false,
     });
 
-    let writer = {
+    let mut writer = {
         let peripheral = peripheral.clone();
         let characteristic = characteristic.clone();
         tokio::spawn(async move {
@@ -517,7 +517,9 @@ async fn connect(
                             "ble: write on link {link} failed ({} bytes): {e}",
                             frame.len()
                         );
-                        if failures >= 5 {
+                        // RO_E_CLOSED: Windows already dropped the connection.
+                        let closed = e.to_string().contains("0x80000013");
+                        if closed || failures >= 5 {
                             let _ = peripheral.disconnect().await;
                             break;
                         }
@@ -528,7 +530,15 @@ async fn connect(
     };
 
     let mut assembler = StreamAssembler::default();
-    while let Some(n) = notifications.next().await {
+    loop {
+        // The link ends when notifications stop or the writer gives up.
+        let n = tokio::select! {
+            n = notifications.next() => match n {
+                Some(n) => n,
+                None => break,
+            },
+            _ = &mut writer => break,
+        };
         if n.uuid != CHARACTERISTIC_UUID {
             continue;
         }

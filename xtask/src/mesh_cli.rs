@@ -61,7 +61,7 @@ fn message_id() -> String {
 
 struct Cli {
     node: MeshNode,
-    central: Central,
+    central: Option<Central>,
     peripheral: Peripheral,
     incoming: HashSet<u64>,
     names: HashMap<PeerId, String>,
@@ -100,10 +100,16 @@ impl Cli {
                     if self.incoming.contains(&link) {
                         self.peripheral.write(link, frame)
                     } else {
-                        self.central.write(link, frame)
+                        if let Some(c) = &self.central {
+                            c.write(link, frame)
+                        }
                     }
                 }
-                Output::Close { link } => self.central.close(link),
+                Output::Close { link } => {
+                    if let Some(c) = &self.central {
+                        c.close(link)
+                    }
+                }
                 Output::Event(event) => self.event(event),
             }
         }
@@ -233,10 +239,14 @@ impl Cli {
 pub fn run(args: &[String]) {
     let mut nickname = "desktop".to_string();
     let mut inbox: Option<PathBuf> = None;
+    let mut central_on = true;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         if a == "--inbox" {
             inbox = it.next().map(PathBuf::from);
+        } else if a == "--no-central" {
+            // Only advertise: phones must find and connect to us.
+            central_on = false;
         } else {
             nickname = a.clone();
         }
@@ -253,7 +263,7 @@ pub fn run(args: &[String]) {
     rt.block_on(async move {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let peripheral = Peripheral::start(tx.clone());
-        let central = Central::start(tx);
+        let central = central_on.then(|| Central::start(tx));
         let identity = identity();
         println!("{} me: {nickname}#{} ({})", stamp(), &hex::encode(identity.peer_id())[..4], hex::encode(identity.peer_id()));
         let mut cli = Cli {
