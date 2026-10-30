@@ -391,3 +391,64 @@ fn senders_show_up_in_people() {
         "{names:?}"
     );
 }
+
+#[test]
+fn location_channels_count_people() {
+    use bitchat_core::engine::SAMPLE_PREFIX;
+    use bitchat_nostr::Keys;
+    let mut e = user("dave");
+    e.set_location(Some((48.8566, 2.3522)), T0);
+    let effects = e.take_effects();
+    let sampled: Vec<String> = effects
+        .iter()
+        .filter_map(|x| match x {
+            Effect::Subscribe { id, .. } => id.strip_prefix(SAMPLE_PREFIX).map(str::to_string),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sampled.len(), 5, "one per listed channel (no building)");
+    let city = sampled.iter().find(|g| g.len() == 5).unwrap().clone();
+
+    // Two people show up in the city channel, one of them twice.
+    for secret in [[7u8; 32], [8u8; 32], [7u8; 32]] {
+        let keys = Keys::from_secret_bytes(secret).unwrap();
+        let ev = Event::new(
+            keys.public_key_hex(),
+            (T0 / 1000) as i64,
+            kind::GEOHASH_PRESENCE,
+            vec![vec!["g".into(), city.clone()]],
+            String::new(),
+        )
+        .sign(&keys);
+        e.on_pool_event(
+            PoolEvent::Event {
+                subscription: format!("{SAMPLE_PREFIX}{city}"),
+                relay: "wss://r".into(),
+                event: ev,
+            },
+            T0,
+        );
+    }
+    let counts = e
+        .take_effects()
+        .into_iter()
+        .filter_map(|x| match x {
+            Effect::Ui(UiEvent::ChannelCounts { counts }) => Some(counts),
+            _ => None,
+        })
+        .next_back()
+        .unwrap();
+    assert_eq!(counts[&city], 2);
+    assert_eq!(counts.values().filter(|n| **n == 0).count(), 4);
+    // Five minutes later they're no longer counted.
+    e.emit_people((T0 / 1000) as i64 + 301);
+    let later = e
+        .take_effects()
+        .into_iter()
+        .find_map(|x| match x {
+            Effect::Ui(UiEvent::ChannelCounts { counts }) => Some(counts),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(later[&city], 0);
+}

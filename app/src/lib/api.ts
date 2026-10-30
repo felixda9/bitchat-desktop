@@ -79,6 +79,7 @@ export type UiEvent =
   | { type: "relay"; url: string; status: string }
   | { type: "mesh"; state: string; links: number }
   | { type: "favorites"; items: FavoriteSummary[] }
+  | { type: "channel_counts"; counts: Record<string, number> }
   | {
       type: "settings";
       nickname: string;

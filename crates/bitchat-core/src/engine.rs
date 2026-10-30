@@ -75,6 +75,11 @@ pub const MESH_PREFIX: &str = "mesh:";
 pub const NOSTR_PREFIX: &str = "nostr:";
 /// Subscription for private messages to our main Nostr key.
 pub const ACCOUNT_SUB: &str = "acct-dm";
+/// Light subscriptions that count people in the location channel list
+/// (iOS `beginGeohashSampling`): last 5 minutes, at most 100 events.
+pub const SAMPLE_PREFIX: &str = "geo-sample-";
+pub const SAMPLE_LOOKBACK_SECS: i64 = 300;
+pub const SAMPLE_LIMIT: u32 = 100;
 
 pub fn mesh_key(peer: &[u8; 8]) -> String {
     format!("{MESH_PREFIX}{}", hex::encode(peer))
@@ -194,6 +199,9 @@ pub struct Engine {
     rate: RateLimiter,
     seen: Seen,
     seen_wraps: Seen,
+    /// Per sampled geohash: who was active, and when we heard them.
+    samples: BTreeMap<String, HashMap<String, i64>>,
+    last_counts: BTreeMap<String, usize>,
     acks: VecDeque<PendingAck>,
     mining: HashMap<u64, PendingPublic>,
     next_mine: u64,
@@ -267,6 +275,8 @@ impl Engine {
             rate: RateLimiter::default(),
             seen: Seen::default(),
             seen_wraps: Seen::default(),
+            samples: BTreeMap::new(),
+            last_counts: BTreeMap::new(),
             acks: VecDeque::new(),
             mining: HashMap::new(),
             next_mine: 0,
@@ -411,6 +421,83 @@ impl Engine {
         self.emit_location();
         self.emit_channel();
         self.emit_settings();
+        self.update_sampling(now_ms);
+    }
+
+    /// Keeps one counting subscription per channel in the location list.
+    fn update_sampling(&mut self, now_ms: u64) {
+        let wanted: Vec<String> = self
+            .regional_channels()
+            .into_iter()
+            .filter(|(l, _)| *l != Level::Building)
+            .map(|(_, g)| g)
+            .collect();
+        let gone: Vec<String> = self
+            .samples
+            .keys()
+            .filter(|g| !wanted.contains(g))
+            .cloned()
+            .collect();
+        for gh in gone {
+            self.samples.remove(&gh);
+            self.effects.push(Effect::Unsubscribe {
+                id: format!("{SAMPLE_PREFIX}{gh}"),
+            });
+        }
+        let now = (now_ms / 1000) as i64;
+        for gh in wanted {
+            if self.samples.contains_key(&gh) {
+                continue;
+            }
+            self.samples.insert(gh.clone(), HashMap::new());
+            self.effects.push(Effect::Subscribe {
+                id: format!("{SAMPLE_PREFIX}{gh}"),
+                filter: Filter::geohash_ephemeral(
+                    &gh,
+                    Some(now - SAMPLE_LOOKBACK_SECS),
+                    SAMPLE_LIMIT,
+                ),
+                relays: self.directory.closest_to_geohash(&gh, RELAYS_PER_CHANNEL),
+            });
+        }
+        self.emit_counts(now);
+    }
+
+    /// Someone posted or announced presence in a sampled channel.
+    fn on_sample(&mut self, geohash: &str, event: Event, now_ms: u64) {
+        if event.kind != kind::EPHEMERAL && event.kind != kind::GEOHASH_PRESENCE {
+            return;
+        }
+        let Some(seen) = self.samples.get_mut(geohash) else {
+            return;
+        };
+        // Arrival time: history is at most 5 minutes old, and skewed
+        // clocks still count (as on iOS).
+        seen.insert(event.pubkey.to_lowercase(), (now_ms / 1000) as i64);
+        self.emit_counts((now_ms / 1000) as i64);
+    }
+
+    /// People active in each listed channel; the open one counts from its
+    /// own subscription.
+    fn emit_counts(&mut self, now: i64) {
+        let open = self.channel.as_ref().map(|c| c.geohash.clone());
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        for (gh, seen) in self.samples.iter_mut() {
+            seen.retain(|_, at| now - *at <= ONLINE_WINDOW_SECS);
+            let n = seen
+                .keys()
+                .filter(|pk| !self.state.blocked.contains(*pk))
+                .count();
+            counts.insert(gh.clone(), n);
+        }
+        if let Some(gh) = open {
+            let n = self.visible_people(now).len();
+            counts.insert(gh, n);
+        }
+        if counts != self.last_counts {
+            self.last_counts = counts.clone();
+            self.ui(UiEvent::ChannelCounts { counts });
+        }
     }
 
     fn emit_location(&mut self) {
@@ -588,6 +675,7 @@ impl Engine {
     }
 
     pub fn emit_people(&mut self, now: i64) {
+        self.emit_counts(now);
         if self.mesh.active {
             let people = self.mesh_people();
             self.ui(UiEvent::People {
@@ -622,6 +710,11 @@ impl Engine {
             } => {
                 if subscription == ACCOUNT_SUB {
                     self.on_account_wrap(event, now_ms);
+                    return;
+                }
+                if let Some(gh) = subscription.strip_prefix(SAMPLE_PREFIX) {
+                    let gh = gh.to_string();
+                    self.on_sample(&gh, event, now_ms);
                     return;
                 }
                 let Some(gh) = self.current_geohash().map(str::to_string) else {

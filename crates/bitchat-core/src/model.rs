@@ -163,4 +163,8 @@ pub enum UiEvent {
     Favorites {
         items: Vec<FavoriteSummary>,
     },
+    /// People active recently in each listed location channel.
+    ChannelCounts {
+        counts: std::collections::BTreeMap<String, usize>,
+    },
 }

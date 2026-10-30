@@ -2,6 +2,15 @@
   import { api, colorFor, time } from "./api";
   import { app } from "./store.svelte";
 
+  /** iOS rule: nobody seen in a small, precise channel shows as "?" (people there
+   *  don't announce themselves, for privacy). */
+  function people(geohash: string): string {
+    const n = app.counts[geohash];
+    if (n === undefined) return "";
+    if (n === 0 && geohash.length >= 6) return "[? people]";
+    return `[${n} ${n === 1 ? "person" : "people"}]`;
+  }
+
   const meshLabel = $derived.by(() => {
     switch (app.mesh.state) {
       case "on":
@@ -27,7 +36,7 @@
     {#each app.regional as c (c.geohash)}
       <li>
         <button class:active={app.channel?.geohash === c.geohash} onclick={() => api.join(c.geohash, false)}>
-          #{c.geohash} <span class="muted">{c.level}</span>
+          #{c.geohash} <span class="muted">{c.level} {people(c.geohash)}</span>
         </button>
       </li>
     {/each}

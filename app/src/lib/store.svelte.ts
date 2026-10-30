@@ -21,6 +21,8 @@ export const app = $state({
   /** Bluetooth: starting | on | off | unavailable. */
   mesh: { state: "starting", links: 0 },
   favorites: [] as FavoriteSummary[],
+  /** People active recently per location channel. */
+  counts: {} as Record<string, number>,
   wipedAt: 0,
 });
 
@@ -97,6 +99,9 @@ export function handle(e: UiEvent) {
       break;
     case "favorites":
       app.favorites = e.items;
+      break;
+    case "channel_counts":
+      app.counts = e.counts;
       break;
     case "wiped":
       app.timeline = [];
