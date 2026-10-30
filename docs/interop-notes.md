@@ -240,6 +240,20 @@ with even Y, then odd Y (because the parity byte of S depends on it). Plaintext 
 - Relay: TTL 7 origin; dedup key `sender-timestamp-type-hex(SHA256(payload)[0:4])`, 300 s / 1000;
   degree-based TTL clamps and jitter (`Services/RelayController.swift:26-95`) — local policy.
 - Source routing (v2): originate only if every hop has been seen sending v2. Parse routes if we send v2.
+- Field notes (desktop, 2026-10-30):
+  - Windows drops an idle BLE connection after ~10 s unless a `GattSession` with
+    `MaintainConnection = true` is held for the device (btleplug doesn't set it).
+  - The Android app re-advertises under a new random address every time it is connected to, so a
+    central keeps "discovering" it. We connect one device at a time, treat an address first seen
+    within 10 s of a connect as the same phone, close same-role duplicates once an announce binds
+    them (keep the newest, iOS `BLERedundantLinkPolicy`), and back off 30 s → 5 min after each
+    duplicate.
+  - A phone linked both ways (we are central on one link, peripheral on the other) is normal;
+    only duplicates we opened are closed, and sends prefer the link we opened.
+  - Directly connected peers stay listed while the link is up; peers heard only through others
+    drop after 60 s without an announce (same as iOS, so a backgrounded phone can flicker).
+  - Windows `GattServiceProvider` works as a peripheral; a backgrounded iPhone found it and
+    connected. The phones' write MTUs seen: Android 517, iPhone 527.
 
 ## 8. Courier / prekeys (later phase)
 - Seal: `Noise_X_25519_ChaChaPoly_SHA256`, prologue `"bitchat-courier-v1"`; prekey variant
