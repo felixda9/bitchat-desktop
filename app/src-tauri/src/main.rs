@@ -90,6 +90,33 @@ fn set_nearby_only(app: State<'_, App>, on: bool) {
     send(&app, Command::SetNearbyOnly { on });
 }
 
+/// Shrinks the window to fit above the taskbar (small or scaled screens),
+/// centres it there, then shows it.
+fn fit_to_screen(window: &tauri::WebviewWindow) {
+    if let (Ok(Some(monitor)), Ok(outer), Ok(inner)) = (
+        window.current_monitor(),
+        window.outer_size(),
+        window.inner_size(),
+    ) {
+        let area = monitor.work_area();
+        let margin = (32.0 * monitor.scale_factor()) as u32;
+        let width = outer.width.min(area.size.width.saturating_sub(margin));
+        let height = outer.height.min(area.size.height.saturating_sub(margin));
+        if (width, height) != (outer.width, outer.height) {
+            let frame = (outer.width - inner.width, outer.height - inner.height);
+            let _ = window.set_size(tauri::PhysicalSize::new(
+                width.saturating_sub(frame.0),
+                height.saturating_sub(frame.1),
+            ));
+        }
+        let _ = window.set_position(tauri::PhysicalPosition::new(
+            area.position.x + (area.size.width.saturating_sub(width) / 2) as i32,
+            area.position.y + (area.size.height.saturating_sub(height) / 2) as i32,
+        ));
+    }
+    let _ = window.show();
+}
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
@@ -102,6 +129,9 @@ fn main() {
             let dir = Storage::default_dir();
             let core = tauri::async_runtime::block_on(async move { App::start(dir, sink) })?;
             app.manage(core);
+            for window in app.webview_windows().values() {
+                fit_to_screen(window);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
