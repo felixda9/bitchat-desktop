@@ -99,6 +99,26 @@ impl MeshIdentity {
         self.signed(t::ANNOUNCE, payload, timestamp_ms)
     }
 
+    /// Signed v2 file transfer (`BitchatFilePacket` payload), to everyone or
+    /// to one peer.
+    pub fn file_transfer(
+        &self,
+        payload: Vec<u8>,
+        recipient: Option<[u8; 8]>,
+        timestamp_ms: u64,
+    ) -> Option<Packet> {
+        let mut packet = Packet::new(
+            t::FILE_TRANSFER,
+            self.peer_id,
+            timestamp_ms,
+            payload,
+            DEFAULT_TTL,
+        );
+        packet.version = 2;
+        packet.recipient_id = recipient;
+        self.sign(&mut packet).then_some(packet)
+    }
+
     /// Signed public chat message; the payload is the UTF-8 text.
     pub fn public_message(&self, text: &str, timestamp_ms: u64) -> Option<Packet> {
         self.signed(t::MESSAGE, text.as_bytes().to_vec(), timestamp_ms)

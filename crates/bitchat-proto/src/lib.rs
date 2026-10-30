@@ -3,6 +3,7 @@
 //! Ported from the iOS BitFoundation package, which is the spec of record.
 
 pub mod compression;
+pub mod file;
 pub mod geohash;
 pub mod ids;
 pub mod limits;

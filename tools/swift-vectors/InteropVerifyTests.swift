@@ -114,6 +114,46 @@ struct InteropVerifyTests {
         let fragment_ids: String?
     }
 
+    private struct FileCase: Decodable {
+        let name: String
+        let encoded: String
+        let file_name: String?
+        let mime_type: String?
+        let content: String
+    }
+
+    private struct FileVectors: Decodable {
+        let packets: [FileCase]
+        let broadcast: String
+        let signing_public: String
+    }
+
+    @Test func rustFilePacketsDecodeInSwift() throws {
+        guard let vectors = try load("files.json", as: FileVectors.self) else { return }
+        #expect(!vectors.packets.isEmpty)
+        for item in vectors.packets {
+            let data = try #require(Data(hexString: item.encoded))
+            let packet = try #require(BitchatFilePacket.decode(data), "\(item.name)")
+            #expect(packet.fileName == item.file_name, "\(item.name)")
+            #expect(packet.mimeType == item.mime_type, "\(item.name)")
+            #expect(packet.content.hexEncodedString() == item.content, "\(item.name)")
+            guard case .success = BLEIncomingFileValidator.validate(payload: data) else {
+                Issue.record("\(item.name) rejected by the iOS validator")
+                continue
+            }
+        }
+        let wire = try #require(Data(hexString: vectors.broadcast))
+        let packet = try #require(BitchatPacket.from(wire))
+        #expect(packet.type == MessageType.fileTransfer.rawValue)
+        #expect(packet.recipientID == nil)
+        let signature = try #require(packet.signature)
+        let signingPublic = try #require(Data(hexString: vectors.signing_public))
+        let key = try Curve25519.Signing.PublicKey(rawRepresentation: signingPublic)
+        let preimage = try #require(packet.toBinaryDataForSigning())
+        #expect(key.isValidSignature(signature, for: preimage))
+        #expect(BitchatFilePacket.decode(packet.payload) != nil)
+    }
+
     private struct BridgeCarrierCase: Decodable {
         let name: String
         let carrier: String

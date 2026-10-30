@@ -422,3 +422,84 @@ fn the_bridge_cell_rides_the_announce() {
     let bob = sim.nodes[2].peer(&sim.id(1)).unwrap();
     assert_eq!(bob.bridge_geohash.as_deref(), Some("u4pruy"));
 }
+
+fn files(sim: &Sim, node: usize) -> Vec<(PeerId, Vec<u8>, bool)> {
+    sim.events[node]
+        .iter()
+        .filter_map(|e| match e {
+            NodeEvent::File {
+                from,
+                payload,
+                private,
+                ..
+            } => Some((*from, payload.clone(), *private)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn jpeg_file(len: usize) -> Vec<u8> {
+    let mut content = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    content.extend((0..len).map(|i| (i * 31 % 251) as u8));
+    bitchat_proto::file::FilePacket {
+        file_name: Some("img_20261030_140000_test.jpg".into()),
+        file_size: None,
+        mime_type: Some("image/jpeg".into()),
+        content,
+    }
+    .encode()
+    .unwrap()
+}
+
+#[test]
+fn images_reach_everyone_in_paced_fragments() {
+    let mut sim = Sim::new(&["alice", "bob", "carol"], 185);
+    sim.connect(0, 1);
+    sim.connect(1, 2);
+    sim.run(2_000);
+    let alice = sim.id(0);
+    let payload = jpeg_file(20_000);
+    sim.largest_frame = 0;
+    let out = {
+        let now = sim.now;
+        sim.nodes[0].send_file(payload.clone(), now)
+    };
+    // Only the first fragment goes out at once; the rest are spaced.
+    let first = out
+        .iter()
+        .filter(|o| matches!(o, Output::Write { .. }))
+        .count();
+    assert_eq!(first, 1);
+    sim.handle(0, out);
+    sim.settle();
+    sim.run(30_000);
+    assert!(sim.largest_frame <= 185);
+    for node in [1, 2] {
+        assert_eq!(files(&sim, node), vec![(alice, payload.clone(), false)]);
+    }
+}
+
+#[test]
+fn forged_and_unknown_files_do_not_spread() {
+    let mut sim = line();
+    // Signed by a key bob never announced.
+    let stranger = bitchat_mesh::MeshIdentity::new([9; 32], [99; 32]);
+    let packet = stranger
+        .file_transfer(jpeg_file(50), None, sim.now)
+        .unwrap();
+    let frame = packet.encode(false).unwrap();
+    let link = *sim
+        .wires
+        .iter()
+        .find(|((n, _), (m, _))| *n == 0 && *m == 1)
+        .unwrap()
+        .1;
+    let out = {
+        let now = sim.now;
+        sim.nodes[1].on_frame(link.1, &frame, now)
+    };
+    sim.handle(1, out);
+    sim.settle();
+    sim.run(1_000);
+    assert!(files(&sim, 1).is_empty() && files(&sim, 2).is_empty());
+}

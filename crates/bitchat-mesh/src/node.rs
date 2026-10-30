@@ -31,6 +31,12 @@ pub const ANNOUNCE_BACK_INTERVAL_MS: u64 = 300_000;
 pub const INITIAL_SYNC_DELAY_MS: u64 = 1_000;
 /// Fragment frame overhead: v1 header, sender, recipient, fragment header.
 const FRAGMENT_FRAME_OVERHEAD: usize = 14 + 8 + 8 + 13;
+/// Gap between the fragments we send (`bleFragmentSpacingMs`).
+pub const FRAGMENT_SPACING_MS: u64 = 30;
+pub const FRAGMENT_SPACING_DIRECTED_MS: u64 = 25;
+/// Capabilities always advertised: encrypted private media (Noise payload
+/// 0x20), which we can receive.
+pub const BASE_CAPABILITIES: u64 = crate::announce::caps::PRIVATE_MEDIA;
 
 /// Chunk size so a fragment frame fits a link's write limit.
 pub fn fragment_chunk_size(link_limit: usize) -> usize {
@@ -66,6 +72,14 @@ pub enum NodeEvent {
     Unsent {
         peer: PeerId,
         payloads: Vec<Vec<u8>>,
+    },
+    /// A signed file transfer (`BitchatFilePacket` payload) to everyone, or
+    /// to us (`private`). Encrypted private files arrive as `Private`.
+    File {
+        from: PeerId,
+        payload: Vec<u8>,
+        private: bool,
+        timestamp: u64,
     },
     /// A Nostr carrier (type 0x28) payload. `directed` ones were addressed
     /// to us and signed by the sender's announced key; broadcasts are not
@@ -126,6 +140,10 @@ pub struct MeshNode {
     next_announce_ms: u64,
     last_announce_ms: Option<u64>,
     next_maintenance_ms: u64,
+    /// Fragments waiting their turn: (due ms, link, frame).
+    paced: std::collections::VecDeque<(u64, LinkId, Vec<u8>)>,
+    /// Time of the current input, for pacing.
+    clock: u64,
     out: Vec<Output>,
 }
 
@@ -158,7 +176,7 @@ impl MeshNode {
     pub fn new(identity: MeshIdentity, nickname: &str, now_ms: u64) -> MeshNode {
         let local = identity.peer_id();
         let state = PeerState {
-            capabilities: 0,
+            capabilities: BASE_CAPABILITIES,
             signing_public: identity.signing_public(),
         };
         MeshNode {
@@ -178,6 +196,8 @@ impl MeshNode {
             next_announce_ms: now_ms,
             last_announce_ms: None,
             next_maintenance_ms: now_ms + MAINTENANCE_INTERVAL_MS,
+            paced: std::collections::VecDeque::new(),
+            clock: now_ms,
             out: Vec::new(),
             identity,
         }
@@ -229,6 +249,7 @@ impl MeshNode {
         role: LinkRole,
         now_ms: u64,
     ) -> Vec<Output> {
+        self.clock = now_ms;
         self.links.insert(
             link,
             Link {
@@ -243,10 +264,12 @@ impl MeshNode {
 
     pub fn link_down(&mut self, link: LinkId) -> Vec<Output> {
         self.links.remove(&link);
+        self.paced.retain(|(_, l, _)| *l != link);
         self.take()
     }
 
     pub fn on_frame(&mut self, link: LinkId, frame: &[u8], now_ms: u64) -> Vec<Output> {
+        self.clock = now_ms;
         if self.links.contains_key(&link)
             && let Some(packet) = Packet::decode(frame)
         {
@@ -256,6 +279,7 @@ impl MeshNode {
     }
 
     pub fn set_nickname(&mut self, nickname: &str, now_ms: u64) -> Vec<Output> {
+        self.clock = now_ms;
         self.nickname = nickname.to_string();
         self.announce(now_ms, true);
         self.take()
@@ -269,6 +293,7 @@ impl MeshNode {
         bridge_geohash: Option<String>,
         now_ms: u64,
     ) -> Vec<Output> {
+        self.clock = now_ms;
         if capabilities != self.capabilities || bridge_geohash != self.bridge_geohash {
             self.capabilities = capabilities;
             self.bridge_geohash = bridge_geohash;
@@ -285,6 +310,7 @@ impl MeshNode {
         payload: Vec<u8>,
         now_ms: u64,
     ) -> Vec<Output> {
+        self.clock = now_ms;
         let mut packet = Packet::new(
             t::NOSTR_CARRIER,
             self.peer_id(),
@@ -307,6 +333,7 @@ impl MeshNode {
     }
 
     pub fn send_public(&mut self, text: &str, now_ms: u64) -> Vec<Output> {
+        self.clock = self.clock.max(now_ms);
         if let Some(packet) = self.identity.public_message(text, now_ms) {
             self.dedup.mark(PacketKey::of(&packet), now_ms);
             self.sync.on_packet_seen(&packet, now_ms);
@@ -317,12 +344,26 @@ impl MeshNode {
 
     /// Sends a Noise payload (type byte first), setting up a session first if needed.
     pub fn send_private(&mut self, to: PeerId, payload: Vec<u8>, now_ms: u64) -> Vec<Output> {
+        self.clock = now_ms;
         let events = self.sessions.send(to, payload, now_ms);
         self.on_session_events(events, now_ms);
         self.take()
     }
 
+    /// Sends a file to everyone (signed v2 file transfer). Private files go
+    /// through `send_private` as Noise payload 0x20.
+    pub fn send_file(&mut self, payload: Vec<u8>, now_ms: u64) -> Vec<Output> {
+        self.clock = now_ms;
+        if let Some(packet) = self.identity.file_transfer(payload, None, now_ms) {
+            self.dedup.mark(PacketKey::of(&packet), now_ms);
+            self.sync.on_packet_seen(&packet, now_ms);
+            self.transmit(packet, None, None);
+        }
+        self.take()
+    }
+
     pub fn leave(&mut self, now_ms: u64) -> Vec<Output> {
+        self.clock = now_ms;
         if let Some(packet) = self.identity.leave(now_ms) {
             self.dedup.mark(PacketKey::of(&packet), now_ms);
             self.transmit(packet, None, None);
@@ -332,6 +373,14 @@ impl MeshNode {
 
     /// Timers: relays, handshakes, sync, announces, expiry. Call every ~50 ms.
     pub fn tick(&mut self, now_ms: u64) -> Vec<Output> {
+        self.clock = now_ms;
+        while self.paced.front().is_some_and(|(due, _, _)| *due <= now_ms) {
+            if let Some((_, link, frame)) = self.paced.pop_front()
+                && self.links.contains_key(&link)
+            {
+                self.out.push(Output::Write { link, frame });
+            }
+        }
         for packet in self.relays.due(now_ms) {
             let ingress = self.relay_ingress.remove(&PacketKey::of(&packet));
             self.transmit(packet, ingress, None);
@@ -456,8 +505,10 @@ impl MeshNode {
                 self.handle_carrier(&packet);
                 true
             }
+            // Only an authenticated file spreads, directed or not.
+            t::FILE_TRANSFER => self.handle_file(&packet, now_ms),
             // Broadcast media that fails sender checks must not spread.
-            t::FILE_TRANSFER | t::BOARD_POST | t::VOICE_FRAME => {
+            t::BOARD_POST | t::VOICE_FRAME => {
                 let directed = packet.recipient_id.is_some_and(|r| r != BROADCAST);
                 directed
                     || self
@@ -582,6 +633,37 @@ impl MeshNode {
         });
     }
 
+    /// iOS `BLEFileTransferHandler`: the signature is checked before
+    /// anything else; files for others are only relayed. False: drop it.
+    fn handle_file(&mut self, packet: &Packet, now_ms: u64) -> bool {
+        let Some(key) = self.peers.get(&packet.sender_id).map(|p| p.signing_public) else {
+            return false;
+        };
+        if !verify(packet, &key) {
+            return false;
+        }
+        let private = match packet.recipient_id {
+            None => false,
+            Some(r) if r == BROADCAST => false,
+            Some(r) if r == self.peer_id() => true,
+            Some(_) => return true,
+        };
+        // Only files that pass the checks enter the sync store.
+        if bitchat_proto::file::validate(&packet.payload).is_none() {
+            return true;
+        }
+        if !private {
+            self.sync.on_packet_seen(packet, now_ms);
+        }
+        self.emit(NodeEvent::File {
+            from: packet.sender_id,
+            payload: packet.payload.clone(),
+            private,
+            timestamp: packet.timestamp,
+        });
+        true
+    }
+
     /// Carriers addressed elsewhere are only relayed. One addressed to us
     /// must be signed by its sender (who may be several hops away).
     fn handle_carrier(&mut self, packet: &Packet) {
@@ -678,7 +760,7 @@ impl MeshNode {
         let Some(packet) = self.identity.announce_with_cell(
             &self.nickname,
             &neighbors,
-            self.capabilities,
+            self.capabilities | BASE_CAPABILITIES,
             self.bridge_geohash.as_deref(),
             now_ms,
         ) else {
@@ -765,18 +847,34 @@ impl MeshNode {
                 return;
             };
             let now_ms = packet.timestamp;
-            for part in parts {
+            // Spaced out like iOS so phones keep up with long transfers.
+            let spacing = if to.is_some() || packet.recipient_id.is_some_and(|r| r != BROADCAST) {
+                FRAGMENT_SPACING_DIRECTED_MS
+            } else {
+                FRAGMENT_SPACING_MS
+            };
+            let start = self
+                .paced
+                .back()
+                .map_or(self.clock, |(due, _, _)| (*due + spacing).max(self.clock));
+            for (i, part) in parts.into_iter().enumerate() {
                 if part.recipient_id.is_none_or(|r| r == BROADCAST)
                     && packet.sender_id == self.peer_id()
                 {
                     self.sync.on_packet_seen(&part, now_ms);
                 }
-                if let Some(bytes) = part.encode(false) {
-                    for link in &targets {
+                let Some(bytes) = part.encode(false) else {
+                    continue;
+                };
+                let due = start + i as u64 * spacing;
+                for link in &targets {
+                    if due <= self.clock {
                         self.out.push(Output::Write {
                             link: *link,
                             frame: bytes.clone(),
                         });
+                    } else {
+                        self.paced.push_back((due, *link, bytes.clone()));
                     }
                 }
             }

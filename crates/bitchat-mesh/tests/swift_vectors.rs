@@ -258,3 +258,32 @@ fn swift_directed_carrier_verifies() {
     assert_eq!(packet.payload, bytes(&p["payload"]));
     assert!(verify(&packet, &bytes(&p["signing_public"])));
 }
+
+#[test]
+fn swift_file_packets_decode() {
+    let e = export();
+    let Some(f) = e.get("files").cloned() else {
+        eprintln!("no Swift file vectors yet; skipped");
+        return;
+    };
+    for row in f["packets"].as_array().unwrap() {
+        let data = bytes(&row["encoded"]);
+        let p = bitchat_proto::file::FilePacket::decode(&data).unwrap();
+        assert_eq!(p.file_name.as_deref(), row["file_name"].as_str());
+        assert_eq!(p.mime_type.as_deref(), row["mime_type"].as_str());
+        assert_eq!(p.content, bytes(&row["content"]));
+        assert_eq!(
+            bitchat_proto::file::validate(&data).is_some(),
+            row["accepted"].as_bool().unwrap(),
+            "{}",
+            row["name"]
+        );
+        // Same fields, same bytes.
+        assert_eq!(p.encode().unwrap(), data, "{}", row["name"]);
+    }
+    let b = &f["broadcast"];
+    let packet = Packet::decode(&bytes(&b["wire"])).unwrap();
+    assert_eq!((packet.packet_type, packet.version), (t::FILE_TRANSFER, 2));
+    assert_eq!(packet.payload, bytes(&b["payload"]));
+    assert!(verify(&packet, &bytes(&b["signing_public"])));
+}

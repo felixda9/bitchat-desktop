@@ -29,6 +29,7 @@ struct InteropExportTests {
         out["sync"] = sync()
         out["mesh_signed"] = try meshSigned()
         out["bridge"] = try bridge()
+        out["files"] = try files()
 
         let folder = URL(fileURLWithPath: dir).appendingPathComponent("swift")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -555,6 +556,57 @@ struct InteropExportTests {
     }
 
     // MARK: - Signed mesh packets
+
+    // MARK: - Files
+
+    private func files() throws -> [String: Any] {
+        var jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0])
+        jpeg.append(Data((0..<600).map { UInt8(truncatingIfNeeded: $0 * 7) }))
+        var m4a = Data([0x00, 0x00, 0x00, 0x1C]) + Data("ftypM4A ".utf8)
+        m4a.append(Data(repeating: 5, count: 300))
+        let packets: [(String, BitchatFilePacket)] = [
+            ("image", BitchatFilePacket(fileName: "img_20261030_140000_3F2504E0-4F89-11D3-9A0C-0305E82C3301.jpg",
+                                        fileSize: UInt64(jpeg.count), mimeType: "image/jpeg", content: jpeg)),
+            ("voice", BitchatFilePacket(fileName: "voice_20261030_140000_3F2504E0-4F89-11D3-9A0C-0305E82C3301.m4a",
+                                        fileSize: UInt64(m4a.count), mimeType: "audio/mp4", content: m4a)),
+            ("bare", BitchatFilePacket(fileName: nil, fileSize: nil, mimeType: "image/jpeg", content: jpeg))
+        ]
+        let encoded: [[String: Any]] = packets.map { item in
+            let data = item.1.encode()!
+            let accepted: Bool = {
+                if case .success = BLEIncomingFileValidator.validate(payload: data) { return true }
+                return false
+            }()
+            return [
+                "name": item.0,
+                "encoded": data.hexEncodedString(),
+                "file_name": optionalString(item.1.fileName),
+                "mime_type": optionalString(item.1.mimeType),
+                "content": item.1.content.hexEncodedString(),
+                "accepted": accepted
+            ]
+        }
+
+        // Signed v2 broadcast file transfer, as BLEService.sendFileBroadcast builds it.
+        let signing = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 0x42, count: 32))
+        let noise = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: Data(repeating: 0x24, count: 32))
+        let senderID = Data(hexString: PeerID(publicKey: noise.publicKey.rawRepresentation).id)!
+        let payload = packets[0].1.encode()!
+        var packet = BitchatPacket(
+            type: MessageType.fileTransfer.rawValue, senderID: senderID, recipientID: nil,
+            timestamp: 1_790_000_000_000, payload: payload, signature: nil, ttl: 7, version: 2
+        )
+        packet.signature = try signing.signature(for: packet.toBinaryDataForSigning()!)
+
+        return [
+            "packets": encoded,
+            "broadcast": [
+                "wire": optionalHex(packet.toBinaryData(padding: false)),
+                "signing_public": signing.publicKey.rawRepresentation.hexEncodedString(),
+                "payload": payload.hexEncodedString()
+            ]
+        ]
+    }
 
     // MARK: - Mesh bridge
 

@@ -210,6 +210,64 @@ fn export_rust_vectors() {
 
     export_mesh();
     export_bridge();
+    export_files();
+}
+
+/// File packets and a signed broadcast file transfer for the Swift verifier.
+fn export_files() {
+    use bitchat_proto::file::FilePacket;
+    let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    jpeg.extend((0..700u32).map(|i| (i * 13) as u8));
+    let mut m4a = b"\x00\x00\x00\x1cftypM4A ".to_vec();
+    m4a.extend(std::iter::repeat_n(9u8, 400));
+    let packets = [
+        (
+            "image",
+            Some("img_20261030_140000_3F2504E0-4F89-11D3-9A0C-0305E82C3301.jpg"),
+            "image/jpeg",
+            &jpeg,
+        ),
+        (
+            "voice",
+            Some("voice_20261030_140000_3F2504E0-4F89-11D3-9A0C-0305E82C3301.m4a"),
+            "audio/mp4",
+            &m4a,
+        ),
+        ("bare", None, "image/jpeg", &jpeg),
+    ];
+    let rows: Vec<Value> = packets
+        .iter()
+        .map(|(name, file_name, mime, content)| {
+            let p = FilePacket {
+                file_name: file_name.map(str::to_string),
+                file_size: None,
+                mime_type: Some(mime.to_string()),
+                content: content.to_vec(),
+            };
+            json!({
+                "name": name, "encoded": hex::encode(p.encode().unwrap()),
+                "file_name": file_name, "mime_type": mime, "content": hex::encode(content),
+            })
+        })
+        .collect();
+    let id = MeshIdentity::new([0x24; 32], [0x42; 32]);
+    let payload = FilePacket {
+        file_name: Some("img_rust.jpg".into()),
+        file_size: None,
+        mime_type: Some("image/jpeg".into()),
+        content: jpeg.clone(),
+    }
+    .encode()
+    .unwrap();
+    let packet = id.file_transfer(payload, None, 1_790_000_000_000).unwrap();
+    write(
+        "files.json",
+        &json!({
+            "packets": rows,
+            "broadcast": hex::encode(packet.encode(false).unwrap()),
+            "signing_public": hex::encode(id.signing_public()),
+        }),
+    );
 }
 
 /// Mesh-bridge carriers, stable message IDs and a signed directed carrier.

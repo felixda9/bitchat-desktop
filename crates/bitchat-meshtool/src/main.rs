@@ -159,6 +159,22 @@ impl Cli {
                     payloads.len()
                 )
             }
+            NodeEvent::File {
+                from,
+                payload,
+                private,
+                ..
+            } => {
+                let kind =
+                    bitchat_proto::file::validate(&payload).map_or("file", |f| f.category.prefix());
+                println!(
+                    "{} [file] {kind} from {}{} ({} bytes)",
+                    stamp(),
+                    self.name(&from),
+                    if private { " (private)" } else { "" },
+                    payload.len()
+                )
+            }
             NodeEvent::Carrier {
                 from,
                 payload,
