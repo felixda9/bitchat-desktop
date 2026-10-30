@@ -1,6 +1,7 @@
-//! `cargo xtask mesh [nickname] [--inbox FILE]`: runs a mesh node over the
-//! BLE central and prints what happens. Lines appended to the inbox file are
-//! sent: plain text goes to the mesh, `/dm <name> text` is a private message.
+//! `bitchat-meshtool [nickname] [--inbox FILE] [--no-central]`: runs a mesh
+//! node over Bluetooth (central and peripheral) and prints what happens.
+//! Lines typed or appended to the inbox file are sent: plain text goes to the
+//! mesh, `/dm <name> text` is a private message, `/who` lists peers.
 
 use bitchat_ble::central::{BleEvent, Central};
 use bitchat_ble::peripheral::Peripheral;
@@ -27,7 +28,8 @@ fn stamp() -> String {
 
 /// Same identity across runs, so the phone sees one peer.
 fn identity() -> MeshIdentity {
-    let path = super::root().join("target").join("mesh-cli-identity");
+    let _ = std::fs::create_dir_all("target");
+    let path = std::path::Path::new("target").join("mesh-cli-identity");
     let bytes = std::fs::read(&path)
         .ok()
         .filter(|b| b.len() == 64)
@@ -236,7 +238,12 @@ impl Cli {
     }
 }
 
-pub fn run(args: &[String]) {
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    run(&args);
+}
+
+fn run(args: &[String]) {
     let mut nickname = "desktop".to_string();
     let mut inbox: Option<PathBuf> = None;
     let mut central_on = true;

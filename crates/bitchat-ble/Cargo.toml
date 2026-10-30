@@ -13,6 +13,9 @@ log = "0.4.34"
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 uuid = "1"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+bluer = { version = "0.17.4", features = ["bluetoothd"] }
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Devices_Bluetooth", "Devices_Bluetooth_GenericAttributeProfile", "Foundation", "Foundation_Collections", "Storage_Streams"] }
 

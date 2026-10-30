@@ -2,34 +2,39 @@
 //! phones can connect to us (iPhones with bitchat in the background can
 //! only find devices that advertise). Each subscribed phone becomes a link:
 //! its writes are reassembled into frames, and we send with notifications.
-//! Windows uses `GattServiceProvider`; other platforms are not done yet.
+//! Windows uses `GattServiceProvider`, Linux BlueZ (through bluer).
 
 use crate::central::{BleEvent, LinkId};
 use tokio::sync::mpsc;
 
-// Only the Windows peripheral reads these so far.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 enum Cmd {
     Notify(LinkId, Vec<u8>),
 }
 
 /// Handle to the running peripheral. Dropping it stops advertising.
 pub struct Peripheral {
-    commands: Option<std::sync::mpsc::Sender<Cmd>>,
+    commands: Option<mpsc::UnboundedSender<Cmd>>,
 }
 
 impl Peripheral {
     pub fn start(events: mpsc::UnboundedSender<BleEvent>) -> Peripheral {
         #[cfg(windows)]
         {
-            let (tx, rx) = std::sync::mpsc::channel();
+            let (tx, rx) = mpsc::unbounded_channel();
             std::thread::Builder::new()
                 .name("ble-peripheral".into())
                 .spawn(move || winrt::run(events, rx))
                 .expect("spawn peripheral thread");
             Peripheral { commands: Some(tx) }
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
+        {
+            let (tx, rx) = mpsc::unbounded_channel();
+            tokio::spawn(bluez::run(events, rx));
+            Peripheral { commands: Some(tx) }
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
         {
             let _ = events;
             log::info!("ble: peripheral role not available on this platform yet");
@@ -102,7 +107,7 @@ mod winrt {
 
     pub(super) fn run(
         events: mpsc::UnboundedSender<BleEvent>,
-        commands: std::sync::mpsc::Receiver<Cmd>,
+        mut commands: mpsc::UnboundedReceiver<Cmd>,
     ) {
         let clients: Arc<Mutex<Clients>> = Arc::default();
         let (provider, characteristic) = match setup(&events, &clients) {
@@ -113,7 +118,7 @@ mod winrt {
             }
         };
         log::info!("ble: advertising the bitchat service");
-        while let Ok(cmd) = commands.recv() {
+        while let Some(cmd) = commands.blocking_recv() {
             match cmd {
                 Cmd::Notify(link, frame) => {
                     let client = clients
@@ -305,5 +310,201 @@ mod winrt {
         adv.SetIsDiscoverable(true)?;
         provider.StartAdvertisingWithParameters(&adv)?;
         Ok((provider, characteristic))
+    }
+}
+
+/// Linux: BlueZ GATT server through bluer. BlueZ sends a notification to
+/// every subscribed phone at once (no per-device notify), so a frame for one
+/// link reaches them all; each drops what isn't for it. Phones become links
+/// on their first write; a link ends when the phone disconnects.
+#[cfg(target_os = "linux")]
+mod bluez {
+    use super::Cmd;
+    use crate::central::{BleEvent, next_link_id};
+    use crate::writes::{Assembled, WriteAssembler};
+    use crate::{CHARACTERISTIC_UUID, SERVICE_UUID};
+    use bluer::Address;
+    use bluer::adv::{Advertisement, Type};
+    use bluer::gatt::local::{
+        Application, Characteristic, CharacteristicNotifier, CharacteristicNotify,
+        CharacteristicNotifyMethod, CharacteristicRead, CharacteristicWrite,
+        CharacteristicWriteMethod, Service,
+    };
+    use futures::FutureExt;
+    use std::collections::HashMap;
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+    use tokio::sync::mpsc;
+
+    struct Client {
+        link: u64,
+        writes: WriteAssembler,
+    }
+
+    type Clients = Arc<Mutex<HashMap<Address, Client>>>;
+    type Notifier = Arc<tokio::sync::Mutex<Option<CharacteristicNotifier>>>;
+
+    /// The same frame for several links goes out once.
+    const SAME_FRAME_WINDOW: Duration = Duration::from_secs(1);
+
+    pub(super) async fn run(
+        events: mpsc::UnboundedSender<BleEvent>,
+        mut commands: mpsc::UnboundedReceiver<Cmd>,
+    ) {
+        if let Err(e) = serve(&events, &mut commands).await {
+            log::warn!("ble: could not start the peripheral: {e}");
+        }
+    }
+
+    async fn serve(
+        events: &mpsc::UnboundedSender<BleEvent>,
+        commands: &mut mpsc::UnboundedReceiver<Cmd>,
+    ) -> bluer::Result<()> {
+        let session = bluer::Session::new().await?;
+        let adapter = session.default_adapter().await?;
+        adapter.set_powered(true).await?;
+        let clients: Clients = Arc::default();
+        let notifier: Notifier = Arc::default();
+
+        let write = {
+            let events = events.clone();
+            let clients = clients.clone();
+            CharacteristicWriteMethod::Fun(Box::new(move |value, req| {
+                let events = events.clone();
+                let clients = clients.clone();
+                async move {
+                    let mut map = clients.lock().expect("clients");
+                    let client = map.entry(req.device_address).or_insert_with(|| {
+                        let link = next_link_id();
+                        let max_write = (req.mtu as usize).saturating_sub(3).max(20);
+                        log::info!(
+                            "ble: incoming link {link} from {}, writes up to {max_write} bytes",
+                            req.device_address
+                        );
+                        let _ = events.send(BleEvent::LinkUp {
+                            link,
+                            max_write,
+                            name: req.device_address.to_string(),
+                            incoming: true,
+                        });
+                        Client {
+                            link,
+                            writes: WriteAssembler::default(),
+                        }
+                    });
+                    match client.writes.append(req.offset as usize, &value) {
+                        Assembled::Frame(frame) => {
+                            let _ = events.send(BleEvent::Frame {
+                                link: client.link,
+                                frame,
+                            });
+                        }
+                        Assembled::Oversized => {
+                            log::warn!("ble: oversized write on link {}", client.link)
+                        }
+                        Assembled::Waiting => {}
+                    }
+                    Ok(())
+                }
+                .boxed()
+            }))
+        };
+        let notify = {
+            let notifier = notifier.clone();
+            CharacteristicNotifyMethod::Fun(Box::new(move |n| {
+                let notifier = notifier.clone();
+                async move {
+                    log::info!("ble: a phone subscribed to notifications");
+                    *notifier.lock().await = Some(n);
+                }
+                .boxed()
+            }))
+        };
+        let app = Application {
+            services: vec![Service {
+                uuid: SERVICE_UUID,
+                primary: true,
+                characteristics: vec![Characteristic {
+                    uuid: CHARACTERISTIC_UUID,
+                    // Reads return nothing (iOS does the same).
+                    read: Some(CharacteristicRead {
+                        read: true,
+                        fun: Box::new(|_| async move { Ok(Vec::new()) }.boxed()),
+                        ..Default::default()
+                    }),
+                    write: Some(CharacteristicWrite {
+                        write: true,
+                        write_without_response: true,
+                        method: write,
+                        ..Default::default()
+                    }),
+                    notify: Some(CharacteristicNotify {
+                        notify: true,
+                        method: notify,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let _app = adapter.serve_gatt_application(app).await?;
+        // Service UUID only: no local name, like the phones.
+        let _adv = adapter
+            .advertise(Advertisement {
+                advertisement_type: Type::Peripheral,
+                service_uuids: [SERVICE_UUID].into_iter().collect(),
+                discoverable: Some(true),
+                ..Default::default()
+            })
+            .await?;
+        log::info!("ble: advertising the bitchat service");
+
+        let mut recent: HashMap<u64, Instant> = HashMap::new();
+        let mut check = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            tokio::select! {
+                cmd = commands.recv() => {
+                    let Some(Cmd::Notify(_link, frame)) = cmd else { break };
+                    let now = Instant::now();
+                    recent.retain(|_, at| now.duration_since(*at) < SAME_FRAME_WINDOW);
+                    let mut h = DefaultHasher::new();
+                    frame.hash(&mut h);
+                    if recent.insert(h.finish(), now).is_some() {
+                        continue;
+                    }
+                    let mut guard = notifier.lock().await;
+                    if let Some(n) = guard.as_mut()
+                        && let Err(e) = n.notify(frame).await
+                    {
+                        log::info!("ble: notifications stopped: {e}");
+                        *guard = None;
+                    }
+                }
+                _ = check.tick() => {
+                    // Links end when their phone disconnects.
+                    let known: Vec<(Address, u64)> = clients
+                        .lock()
+                        .expect("clients")
+                        .iter()
+                        .map(|(a, c)| (*a, c.link))
+                        .collect();
+                    for (address, link) in known {
+                        let connected = match adapter.device(address) {
+                            Ok(d) => d.is_connected().await.unwrap_or(false),
+                            Err(_) => false,
+                        };
+                        if !connected {
+                            clients.lock().expect("clients").remove(&address);
+                            log::info!("ble: incoming link {link} closed");
+                            let _ = events.send(BleEvent::LinkDown { link });
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }

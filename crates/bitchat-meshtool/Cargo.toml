@@ -1,0 +1,17 @@
+[package]
+name = "bitchat-meshtool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+bitchat-ble = { version = "0.1.0", path = "../bitchat-ble" }
+bitchat-mesh = { version = "0.1.0", path = "../bitchat-mesh" }
+bitchat-proto = { version = "0.1.0", path = "../bitchat-proto" }
+env_logger = "0.11.11"
+getrandom = "0.4.3"
+hex = "0.4.3"
+log = "0.4.34"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
