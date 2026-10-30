@@ -28,7 +28,7 @@ pub const DIRECTORY_REFRESH: Duration = Duration::from_secs(24 * 3600);
 pub const MESH_TICK: Duration = Duration::from_millis(50);
 const DIRECTORY_CACHE: &str = "relays.csv";
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Command {
     Join {
         geohash: String,
@@ -72,6 +72,16 @@ pub enum Command {
     SetNearbyOnly {
         on: bool,
     },
+    /// Send an image (a small JPEG without metadata) to #mesh or the open
+    /// Bluetooth chat.
+    SendImage {
+        data: Vec<u8>,
+    },
+    /// The bytes and MIME type of an image or voice note.
+    Media {
+        id: String,
+        reply: tokio::sync::oneshot::Sender<Option<(String, Vec<u8>)>>,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -112,6 +122,13 @@ impl App {
 
     pub fn send(&self, command: Command) {
         let _ = self.commands.send(command);
+    }
+
+    /// MIME type and bytes of a stored image or voice note.
+    pub async fn media(&self, id: String) -> Option<(String, Vec<u8>)> {
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        self.send(Command::Media { id, reply });
+        rx.await.ok().flatten()
     }
 }
 
@@ -260,6 +277,10 @@ impl Runner {
                 }
                 Effect::MeshCarrier { to, payload } => {
                     let out = self.mesh.send_carrier(to, payload, now_ms());
+                    self.apply_mesh(out);
+                }
+                Effect::MeshFile { payload } => {
+                    let out = self.mesh.send_file(payload, now_ms());
                     self.apply_mesh(out);
                 }
                 Effect::MeshAdvertise { capabilities, cell } => {
@@ -447,6 +468,10 @@ impl Runner {
             Command::Favorite { peer, on } => self.engine.set_favorite(&peer, on, now),
             Command::SetBridge { enabled } => self.engine.set_bridge(enabled, now),
             Command::SetNearbyOnly { on } => self.engine.set_nearby_only(on),
+            Command::SendImage { data } => self.engine.send_image(data, now),
+            Command::Media { id, reply } => {
+                let _ = reply.send(self.engine.media(&id));
+            }
             Command::Refresh => {
                 self.engine.announce(now);
                 self.engine.emit_favorites();

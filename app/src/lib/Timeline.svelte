@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, colorFor, time } from "./api";
   import { app } from "./store.svelte";
+  import Media from "./Media.svelte";
 
   let box: HTMLDivElement;
 
@@ -35,7 +36,11 @@
         >
           &lt;{line.message.display}{#if line.message.teleported}↗{/if}&gt;
         </button>
-        <span class="text">{line.message.content}</span>
+        {#if line.message.media}
+          <span class="media"><Media media={line.message.media} /></span>
+        {:else}
+          <span class="text">{line.message.content}</span>
+        {/if}
       </p>
     {/if}
   {/each}
@@ -61,6 +66,10 @@
     padding: 0;
     font: inherit;
     cursor: pointer;
+  }
+  .media {
+    display: block;
+    padding-left: 2ch;
   }
   .nick.plain {
     cursor: default;

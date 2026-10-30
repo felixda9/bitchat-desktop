@@ -69,6 +69,9 @@ fn settle(sides: &mut [Side; 2], now: u64) {
                     Effect::MeshCarrier { to, payload } => {
                         outputs.extend(side.node.send_carrier(to, payload, now))
                     }
+                    Effect::MeshFile { payload } => {
+                        outputs.extend(side.node.send_file(payload, now))
+                    }
                     Effect::MeshAdvertise { capabilities, cell } => {
                         outputs.extend(side.node.set_advertisement(capabilities, cell, now))
                     }
@@ -596,4 +599,107 @@ fn the_gateway_carries_a_location_channel_both_ways() {
         .find(|r| r.content == "hello from the internet")
         .expect("bob got it over the mesh");
     assert!(row.display.starts_with("dave#"));
+}
+
+// ---- images and voice notes ----
+
+fn fake_jpeg(seed: u8) -> Vec<u8> {
+    let mut d = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    d.extend((0..3000u32).map(|i| (i as u8).wrapping_mul(seed)));
+    d
+}
+
+#[test]
+fn images_go_to_mesh_and_private_chats() {
+    let (mut sides, mut now) = meet();
+    let alice_key = sides[0].key();
+
+    let public = fake_jpeg(3);
+    sides[0].engine.send_image(public.clone(), now);
+    settle(&mut sides, now);
+    now = run(&mut sides, now, 10_000);
+    let row = rows(&sides[1], false)
+        .into_iter()
+        .find(|r| r.media.is_some())
+        .expect("bob sees the image in #mesh");
+    let media = row.media.unwrap();
+    assert_eq!(
+        (media.kind.as_str(), media.mime.as_str()),
+        ("image", "image/jpeg")
+    );
+    assert!(media.name.unwrap().starts_with("img_"));
+    assert_eq!(sides[1].engine.media(&media.id).unwrap().1, public);
+    assert!(
+        rows(&sides[0], false)
+            .iter()
+            .any(|r| r.own && r.media.is_some())
+    );
+
+    // Bob answers privately: encrypted, in the chat with alice.
+    let private = fake_jpeg(7);
+    sides[1].engine.open_dm(Some(&alice_key));
+    sides[1].engine.send_image(private.clone(), now);
+    settle(&mut sides, now);
+    run(&mut sides, now, 10_000);
+    let got = sides[0]
+        .ui
+        .iter()
+        .find_map(|e| match e {
+            UiEvent::Dm { message, .. } if !message.from_me && message.media.is_some() => {
+                message.media.clone()
+            }
+            _ => None,
+        })
+        .expect("alice got the private image");
+    assert_eq!(sides[0].engine.media(&got.id).unwrap().1, private);
+}
+
+#[test]
+fn voice_notes_can_be_played() {
+    let (mut sides, now) = meet();
+    let mut m4a = b"\x00\x00\x00\x1cftypM4A ".to_vec();
+    m4a.extend(std::iter::repeat_n(5u8, 2000));
+    let payload = bitchat_proto::file::FilePacket {
+        file_name: Some("voice_20261030_140000_X.m4a".into()),
+        file_size: None,
+        mime_type: Some("audio/mp4".into()),
+        content: m4a.clone(),
+    }
+    .encode()
+    .unwrap();
+    let mut wire: VecDeque<Vec<u8>> = sides[0]
+        .node
+        .send_file(payload, now)
+        .into_iter()
+        .filter_map(|o| match o {
+            Output::Write { frame, .. } => Some(frame),
+            _ => None,
+        })
+        .collect();
+    let mut t = now;
+    while t < now + 10_000 {
+        t += 50;
+        for o in sides[0].node.tick(t) {
+            if let Output::Write { frame, .. } = o {
+                wire.push_back(frame);
+            }
+        }
+        while let Some(frame) = wire.pop_front() {
+            for o in sides[1].node.on_frame(1, &frame, t) {
+                if let Output::Event(e) = o {
+                    sides[1].engine.on_mesh_event(e, t);
+                }
+            }
+        }
+    }
+    settle(&mut sides, t);
+    let media = rows(&sides[1], false)
+        .into_iter()
+        .find_map(|r| r.media)
+        .expect("voice note shown");
+    assert_eq!(
+        (media.kind.as_str(), media.mime.as_str()),
+        ("audio", "audio/mp4")
+    );
+    assert_eq!(sides[1].engine.media(&media.id).unwrap().1, m4a);
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, colorFor, time, type DmStatus } from "./api";
   import { app } from "./store.svelte";
+  import Media from "./Media.svelte";
 
   let box: HTMLDivElement | undefined = $state();
 
@@ -43,9 +44,12 @@
         <p class:mine={line.message.from_me}>
           <span class="time">[{time(line.message.timestamp)}]</span>
           <span class="who">{line.message.from_me ? `<${app.nickname}>` : `<${app.dm.display}>`}</span>
-          <span>{line.message.content}</span>
+          {#if !line.message.media}<span>{line.message.content}</span>{/if}
           {#if line.message.from_me}
             <span class="status {line.message.status}" title={line.message.status ?? ""}>{tick(line.message.status)}</span>
+          {/if}
+          {#if line.message.media}
+            <span class="media"><Media media={line.message.media} /></span>
           {/if}
         </p>
       {/if}
@@ -68,6 +72,10 @@
     color: var(--muted);
     font: inherit;
     cursor: pointer;
+  }
+  .media {
+    display: block;
+    padding-left: 2ch;
   }
   .lines {
     flex: 1;

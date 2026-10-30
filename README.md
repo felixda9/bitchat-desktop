@@ -22,13 +22,14 @@
 | **Bluetooth mesh** (`#mesh`) | Public chat, private messages, relaying and sync with phones nearby. The PC both scans and advertises, so phones find it too. |
 | **Location channels** | Geohash channels over Nostr (region down to block), people counts, teleporting, location notes (`/drop`). |
 | **Private messages** | Noise-encrypted over Bluetooth, gift-wrapped over Nostr, with delivered and read receipts. |
+| **Images and voice messages** | Send and receive images in `#mesh` and Bluetooth private chats (encrypted), and play voice messages from phones. |
 | **Favorites** | Star someone in `#mesh` and keep messaging them over the internet when you're apart. |
 | **Mesh bridge** | Joins nearby Bluetooth groups over the internet. Messages from across the bridge show with 🌐. Also carries traffic for phones around you that have no internet. |
 | **Commands** | `/msg` `/who` `/hug` `/slap` `/block` `/unblock` `/fav` `/unfav` `/drop` `/clear` `/help` |
 | **Panic wipe** | Triple-click the `bitchat/` logo to erase everything and start as a new person. |
 | **Privacy** | Tor on by default. Keys kept in the system keychain, saved data encrypted. |
 
-Not yet: images and files, voice notes, groups, QR verification, `/ping`, `/trace`, payments. On macOS, use the official app.
+Not yet: recording voice messages, live voice, files, groups, QR verification, `/ping`, `/trace`, payments. On macOS, use the official app.
 
 ## Compatibility
 
@@ -37,7 +38,7 @@ Works with bitchat **1.8** for iPhone and Mac and **2.2** for Android. The packe
 ## Requirements
 
 - **Windows 10 or 11.** For location channels near you, turn on location for desktop apps in Windows settings.
-- **Linux** with BlueZ. Location comes from GeoClue if it's available.
+- **Linux** with BlueZ. Location comes from GeoClue if it's available. Playing voice messages needs GStreamer's AAC decoder (`gstreamer1.0-libav`).
 
 The Bluetooth built into most laptops is all you need for `#mesh`; a desktop without Bluetooth can use any USB dongle. Without Bluetooth, everything that goes over the internet still works.
 

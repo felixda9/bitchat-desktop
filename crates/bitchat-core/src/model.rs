@@ -2,6 +2,17 @@
 
 use serde::Serialize;
 
+/// An image, voice note or file kept in memory; the UI fetches the bytes by `id`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct MediaRef {
+    pub id: String,
+    /// `image`, `audio` or `file`
+    pub kind: String,
+    pub mime: String,
+    pub name: Option<String>,
+    pub size: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PublicMessage {
     pub id: String,
@@ -17,6 +28,7 @@ pub struct PublicMessage {
     pub emote: bool,
     /// Arrived across the mesh bridge.
     pub bridged: bool,
+    pub media: Option<MediaRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -60,6 +72,7 @@ pub struct DmMessage {
     pub content: String,
     pub timestamp: u64,
     pub status: Option<DmStatus>,
+    pub media: Option<MediaRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

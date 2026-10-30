@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from "./api";
   import { app } from "./store.svelte";
+  import { prepareImage } from "./media";
 
   // Commands that work in location channels (iOS CommandInfo, geohash context).
   const COMMANDS = [
@@ -19,6 +20,35 @@
 
   let text = $state("");
   let input: HTMLInputElement;
+  let picker: HTMLInputElement | undefined = $state();
+
+  // Images go over Bluetooth only: #mesh, or a chat with a mesh peer.
+  const canSendImage = $derived(
+    app.dm ? app.dm.peer.startsWith("mesh:") : app.channel?.geohash === "mesh",
+  );
+
+  async function sendImage(file: Blob) {
+    try {
+      await api.sendImage(await prepareImage(file));
+    } catch (e) {
+      console.warn("image not sent", e);
+    }
+  }
+
+  function picked() {
+    const file = picker?.files?.[0];
+    if (file) sendImage(file);
+    if (picker) picker.value = "";
+  }
+
+  function paste(e: ClipboardEvent) {
+    const item = [...(e.clipboardData?.items ?? [])].find((i) => i.type.startsWith("image/"));
+    const file = item?.getAsFile();
+    if (file && canSendImage) {
+      e.preventDefault();
+      sendImage(file);
+    }
+  }
 
   const suggestions = $derived(
     text.startsWith("/") && !text.includes(" ") ? COMMANDS.filter((c) => c.name.startsWith(text)) : [],
@@ -68,10 +98,15 @@
       bind:this={input}
       bind:value={text}
       onkeydown={keydown}
+      onpaste={paste}
       placeholder={app.channel ? "type a message or /help" : "pick a location channel first"}
       spellcheck="false"
       autocomplete="off"
     />
+    {#if canSendImage}
+      <button class="attach" title="send an image" onclick={() => picker?.click()}>📷</button>
+      <input bind:this={picker} type="file" accept="image/*" hidden onchange={picked} />
+    {/if}
     {#if app.dm && !text.startsWith("/")}
       <span class="count" class:over={tooLong}>{bytes}/255</span>
     {:else if !app.dm && app.channel?.geohash === "mesh" && app.settings.bridge_enabled}
@@ -115,6 +150,17 @@
   .count {
     color: var(--muted);
     font-size: 12px;
+  }
+  .attach {
+    background: none;
+    border: none;
+    font: inherit;
+    cursor: pointer;
+    padding: 0 2px;
+    opacity: 0.8;
+  }
+  .attach:hover {
+    opacity: 1;
   }
   .scope {
     background: none;

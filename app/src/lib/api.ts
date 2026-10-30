@@ -1,6 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+export interface MediaRef {
+  id: string;
+  kind: "image" | "audio" | "file";
+  mime: string;
+  name: string | null;
+  size: number;
+}
+
 export interface PublicMessage {
   id: string;
   pubkey: string;
@@ -12,6 +20,7 @@ export interface PublicMessage {
   emote: boolean;
   /** Arrived across the mesh bridge. */
   bridged: boolean;
+  media: MediaRef | null;
 }
 
 export interface Person {
@@ -41,6 +50,7 @@ export interface DmMessage {
   content: string;
   timestamp: number;
   status: DmStatus | null;
+  media: MediaRef | null;
 }
 
 export interface Conversation {
@@ -118,6 +128,8 @@ export const api = {
   favorite: (peer: string, on: boolean) => invoke("favorite", { peer, on }),
   setBridge: (enabled: boolean) => invoke("set_bridge", { enabled }),
   setNearbyOnly: (on: boolean) => invoke("set_nearby_only", { on }),
+  sendImage: (data: Uint8Array) => invoke("send_image", { data: Array.from(data) }),
+  media: (id: string) => invoke<ArrayBuffer>("media", { id }),
 };
 
 const GEOHASH = /^[0-9bcdefghjkmnpqrstuvwxyz]{1,12}$/;

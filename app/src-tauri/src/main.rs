@@ -86,6 +86,20 @@ fn set_bridge(app: State<'_, App>, enabled: bool) {
 }
 
 #[tauri::command]
+fn send_image(app: State<'_, App>, data: Vec<u8>) {
+    send(&app, Command::SendImage { data });
+}
+
+/// Raw bytes of an image or voice note, for the UI to show or play.
+#[tauri::command]
+async fn media(app: State<'_, App>, id: String) -> Result<tauri::ipc::Response, String> {
+    match app.media(id).await {
+        Some((_, bytes)) => Ok(tauri::ipc::Response::new(bytes)),
+        None => Err("gone".into()),
+    }
+}
+
+#[tauri::command]
 fn set_nearby_only(app: State<'_, App>, on: bool) {
     send(&app, Command::SetNearbyOnly { on });
 }
@@ -138,6 +152,8 @@ fn main() {
             favorite,
             set_bridge,
             set_nearby_only,
+            send_image,
+            media,
             join,
             leave,
             submit,

@@ -17,6 +17,7 @@ use bitchat_nostr::keys::npub_decode;
 use bitchat_nostr::net::{PoolEvent, RelayStatus};
 use bitchat_nostr::relay_directory::{Directory, RELAYS_PER_CHANNEL};
 use bitchat_nostr::{Event, Filter, Keys, pow};
+use bitchat_proto::file::{self, FilePacket};
 use bitchat_proto::geohash::{self, Level};
 use bitchat_proto::payload::{
     NoisePayload, PRIVATE_MESSAGE_FIELD_MAX, PayloadType, PrivateMessage,
@@ -69,6 +70,10 @@ pub enum Effect {
     /// A Nostr carrier: to one peer, or broadcast.
     MeshCarrier {
         to: Option<[u8; 8]>,
+        payload: Vec<u8>,
+    },
+    /// Broadcast a file (`BitchatFilePacket`) on the mesh.
+    MeshFile {
         payload: Vec<u8>,
     },
     /// Capability bits and bridge cell for our announces.
@@ -188,6 +193,56 @@ struct Fix {
     regional: BTreeMap<usize, String>,
 }
 
+/// Images and voice notes, in memory only like the messages that show
+/// them; the oldest go first.
+const MEDIA_CAP_BYTES: usize = 128 * 1024 * 1024;
+
+#[derive(Default)]
+struct MediaStore {
+    items: HashMap<String, (String, Vec<u8>)>,
+    order: VecDeque<String>,
+    bytes: usize,
+}
+
+impl MediaStore {
+    fn insert(&mut self, id: &str, mime: &str, data: Vec<u8>) {
+        if self.items.contains_key(id) {
+            return;
+        }
+        self.bytes += data.len();
+        self.items.insert(id.to_string(), (mime.to_string(), data));
+        self.order.push_back(id.to_string());
+        while self.bytes > MEDIA_CAP_BYTES {
+            let Some(old) = self.order.pop_front() else {
+                break;
+            };
+            if let Some((_, d)) = self.items.remove(&old) {
+                self.bytes -= d.len();
+            }
+        }
+    }
+}
+
+/// `img_yyyyMMdd_HHmmss_<UUID>.jpg`, as iOS names the images it sends.
+fn image_file_name(now_ms: u64) -> String {
+    let secs = now_ms / 1000;
+    let (h, mi, s) = ((secs / 3600) % 24, (secs / 60) % 60, secs % 60);
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = (secs / 86_400) as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!(
+        "img_{y:04}{m:02}{d:02}_{h:02}{mi:02}{s:02}_{}.jpg",
+        new_message_id()
+    )
+}
+
 /// Bounded insertion-ordered set.
 #[derive(Default)]
 struct Seen {
@@ -236,6 +291,9 @@ pub struct Engine {
     relays_up: HashSet<String>,
     /// Channels where we already said a message went via a gateway.
     gateway_notices: HashSet<String>,
+    media: MediaStore,
+    /// Capabilities each mesh peer proved over Noise.
+    peer_caps: HashMap<[u8; 8], u64>,
 }
 
 pub fn geo_sub(geohash: &str) -> String {
@@ -317,6 +375,8 @@ impl Engine {
             gateway: Gateway::new(bridge_on),
             relays_up: HashSet::new(),
             gateway_notices: HashSet::new(),
+            media: MediaStore::default(),
+            peer_caps: HashMap::new(),
         }
         .with_mesh_identity()
     }
@@ -890,6 +950,7 @@ impl Engine {
         }
         c.recent_content.insert(key, timestamp);
         let message = PublicMessage {
+            media: None,
             id: event.id.clone(),
             pubkey: pk.clone(),
             display: if own {
@@ -959,6 +1020,7 @@ impl Engine {
                     return;
                 }
                 let message = DmMessage {
+                    media: None,
                     id: message_id.clone(),
                     from_me: false,
                     content,
@@ -1158,6 +1220,7 @@ impl Engine {
             let pk = event.pubkey.clone();
             let teleported = self.channel.as_ref().is_some_and(|c| c.teleported);
             self.push_timeline(PublicMessage {
+                media: None,
                 id: event.id.clone(),
                 display: display_name(Some(&self.state.nickname), &pk),
                 pubkey: pk,
@@ -1311,6 +1374,7 @@ impl Engine {
             relays,
         });
         let message = DmMessage {
+            media: None,
             id,
             from_me: true,
             content: text.to_string(),
@@ -1550,6 +1614,7 @@ impl Engine {
         if echo {
             let me = self.mesh.me.clone();
             self.push_mesh_timeline(PublicMessage {
+                media: None,
                 id: wire::stable_id(&my_hex, now_ms, text),
                 display: self.display_for(&me),
                 pubkey: me,
@@ -1645,6 +1710,7 @@ impl Engine {
             ));
         }
         let message = DmMessage {
+            media: None,
             id: message_id,
             from_me: true,
             content: text.to_string(),
@@ -1682,6 +1748,7 @@ impl Engine {
                 }
                 self.mesh.names.insert(key.clone(), nickname.clone());
                 self.push_mesh_timeline(PublicMessage {
+                    media: None,
                     id,
                     display: display_name(Some(&nickname), &hex::encode(sender)),
                     pubkey: key,
@@ -1693,6 +1760,15 @@ impl Engine {
                     teleported: false,
                     bridged: false,
                 });
+            }
+            NodeEvent::File {
+                from,
+                payload,
+                private,
+                timestamp,
+            } => self.on_mesh_file(from, &payload, private, timestamp, now_ms),
+            NodeEvent::PeerState { peer, state } => {
+                self.peer_caps.insert(peer, state.capabilities);
             }
             NodeEvent::Carrier {
                 from,
@@ -1735,6 +1811,13 @@ impl Engine {
         };
         let peer = mesh_key(&from);
         match payload.kind {
+            PayloadType::PrivateFile => {
+                if let Some(accepted) = file::validate(&payload.data)
+                    && !self.state.blocked.contains(&peer)
+                {
+                    self.on_private_file(from, accepted, now_ms, now_ms);
+                }
+            }
             PayloadType::PrivateMessage => {
                 let Some(m) = PrivateMessage::decode(&payload.data) else {
                     return;
@@ -1763,6 +1846,7 @@ impl Engine {
                     return;
                 }
                 let message = DmMessage {
+                    media: None,
                     id: m.message_id.clone(),
                     from_me: false,
                     content: m.content,
@@ -1792,6 +1876,185 @@ impl Engine {
                 self.update_status(&peer, &id, status);
             }
             _ => {}
+        }
+    }
+
+    // ---- images and voice notes (iOS BitchatFilePacket over the mesh) ----
+
+    /// Bytes and MIME type of a stored image or voice note.
+    pub fn media(&self, id: &str) -> Option<(String, Vec<u8>)> {
+        self.media.items.get(id).cloned()
+    }
+
+    fn store_media(&mut self, id: &str, accepted: file::Accepted) -> MediaRef {
+        let kind = match accepted.category {
+            file::Category::Image => "image",
+            file::Category::Audio => "audio",
+            file::Category::File => "file",
+        };
+        let media = MediaRef {
+            id: id.to_string(),
+            kind: kind.into(),
+            mime: accepted.mime.into(),
+            name: accepted.packet.file_name.clone(),
+            size: accepted.packet.content.len(),
+        };
+        self.media
+            .insert(id, accepted.mime, accepted.packet.content);
+        media
+    }
+
+    /// A signed file from the mesh: to everyone (#mesh) or to us.
+    fn on_mesh_file(
+        &mut self,
+        from: [u8; 8],
+        payload: &[u8],
+        private: bool,
+        timestamp: u64,
+        now_ms: u64,
+    ) {
+        let Some(accepted) = file::validate(payload) else {
+            return;
+        };
+        let key = mesh_key(&from);
+        if self.state.blocked.contains(&key) {
+            return;
+        }
+        if private {
+            self.on_private_file(from, accepted, timestamp, now_ms);
+            return;
+        }
+        let id = format!("file-{}-{timestamp}", hex::encode(from));
+        if self.mesh.timeline.iter().any(|m| m.id == id) {
+            return;
+        }
+        let content = accepted.category.prefix().to_string();
+        let media = self.store_media(&id, accepted);
+        let nickname = self.mesh.names.get(&key).cloned();
+        self.push_mesh_timeline(PublicMessage {
+            id,
+            display: display_name(nickname.as_deref(), &hex::encode(from)),
+            pubkey: key,
+            content,
+            timestamp: timestamp.min(now_ms),
+            own: false,
+            teleported: false,
+            emote: false,
+            bridged: false,
+            media: Some(media),
+        });
+    }
+
+    fn on_private_file(
+        &mut self,
+        from: [u8; 8],
+        accepted: file::Accepted,
+        timestamp: u64,
+        now_ms: u64,
+    ) {
+        let id = new_message_id();
+        let content = accepted.category.prefix().to_string();
+        let media = self.store_media(&id, accepted);
+        let message = DmMessage {
+            id,
+            from_me: false,
+            content,
+            timestamp: timestamp.min(now_ms),
+            status: None,
+            media: Some(media),
+        };
+        self.add_incoming_dm(&mesh_key(&from), message);
+    }
+
+    /// An image picked in the UI (already a small JPEG without metadata):
+    /// to #mesh, or encrypted to the Bluetooth peer whose chat is open.
+    pub fn send_image(&mut self, jpeg: Vec<u8>, now_ms: u64) {
+        if !jpeg.starts_with(&[0xFF, 0xD8, 0xFF]) || jpeg.len() > file::MAX_IMAGE_BYTES {
+            self.system("that image couldn't be prepared");
+            return;
+        }
+        let packet = FilePacket {
+            file_name: Some(image_file_name(now_ms)),
+            file_size: Some(jpeg.len() as u64),
+            mime_type: Some("image/jpeg".into()),
+            content: jpeg,
+        };
+        let Some(payload) = packet.encode() else {
+            return;
+        };
+        let Some(accepted) = file::validate(&payload) else {
+            return;
+        };
+        match self.open_dm.clone() {
+            Some(peer) => {
+                let Some(id) = mesh_peer_id(&peer) else {
+                    self.system("images only go over bluetooth: to #mesh or to someone nearby");
+                    return;
+                };
+                if self.state.blocked.contains(&peer) {
+                    self.system("you blocked this person — /unblock them first");
+                    return;
+                }
+                let name = self.display_for(&peer);
+                if !self.mesh_online(&id) {
+                    self.system(format!(
+                        "images only go over bluetooth, and {name} isn't nearby"
+                    ));
+                    return;
+                }
+                let announced = self
+                    .mesh
+                    .peers
+                    .iter()
+                    .find(|p| p.id == id)
+                    .map_or(0, |p| p.capabilities);
+                let proven = self.peer_caps.get(&id).copied().unwrap_or(0);
+                if (announced | proven) & caps::PRIVATE_MEDIA == 0 {
+                    self.system(format!(
+                        "{name}'s app can't receive images in private chats"
+                    ));
+                    return;
+                }
+                self.effects.push(Effect::MeshPrivate {
+                    peer: id,
+                    payload: NoisePayload::new(PayloadType::PrivateFile, payload).encode(),
+                });
+                let message_id = new_message_id();
+                let media = self.store_media(&message_id, accepted);
+                let message = DmMessage {
+                    id: message_id,
+                    from_me: true,
+                    content: "[image]".into(),
+                    timestamp: now_ms,
+                    status: Some(DmStatus::Sent),
+                    media: Some(media),
+                };
+                let conv = self.dms.entry(peer.clone()).or_default();
+                conv.geohash = MESH_CHANNEL.into();
+                conv.messages.push(message.clone());
+                self.ui(UiEvent::Dm { peer, message });
+                self.emit_conversations();
+            }
+            None if self.mesh.active => {
+                self.effects.push(Effect::MeshFile { payload });
+                let me = self.mesh.me.clone();
+                let id = format!("file-{}-{now_ms}", hex::encode(self.my_mesh_id()));
+                let media = self.store_media(&id, accepted);
+                self.push_mesh_timeline(PublicMessage {
+                    id,
+                    display: self.display_for(&me),
+                    pubkey: me,
+                    content: "[image]".into(),
+                    timestamp: now_ms,
+                    own: true,
+                    teleported: false,
+                    emote: false,
+                    bridged: false,
+                    media: Some(media),
+                });
+            }
+            None => self
+                .system("images only go over bluetooth: send them in #mesh or to someone nearby"),
         }
     }
 
@@ -1888,6 +2151,7 @@ impl Engine {
                         continue;
                     }
                     self.push_mesh_timeline(PublicMessage {
+                        media: None,
                         id: m.id,
                         pubkey: key,
                         display: m.display,
@@ -2250,6 +2514,7 @@ impl Engine {
                     return;
                 }
                 let message = DmMessage {
+                    media: None,
                     id: message_id.clone(),
                     from_me: false,
                     content,
@@ -2338,6 +2603,7 @@ impl Engine {
         };
         let sent = self.publish_account(&pubkey, &item, Addressing::Geohash, now_ms);
         let message = DmMessage {
+            media: None,
             id: message_id,
             from_me: true,
             content: text.to_string(),
