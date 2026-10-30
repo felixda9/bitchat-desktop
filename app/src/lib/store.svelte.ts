@@ -1,4 +1,4 @@
-import type { Conversation, DmMessage, Note, Person, PublicMessage, RegionalChannel, UiEvent } from "./api";
+import type { Conversation, DmMessage, FavoriteSummary, Note, Person, PublicMessage, RegionalChannel, UiEvent } from "./api";
 
 export type Line = { kind: "public"; message: PublicMessage } | { kind: "system"; text: string; timestamp: number };
 export type DmLine = { kind: "dm"; message: DmMessage } | { kind: "system"; text: string; timestamp: number };
@@ -20,6 +20,7 @@ export const app = $state({
   regional: [] as RegionalChannel[],
   /** Bluetooth: starting | on | off | unavailable. */
   mesh: { state: "starting", links: 0 },
+  favorites: [] as FavoriteSummary[],
   wipedAt: 0,
 });
 
@@ -94,10 +95,14 @@ export function handle(e: UiEvent) {
     case "mesh":
       app.mesh = { state: e.state, links: e.links };
       break;
+    case "favorites":
+      app.favorites = e.items;
+      break;
     case "wiped":
       app.timeline = [];
       app.dm = null;
       app.conversations = [];
+      app.favorites = [];
       app.notes = [];
       app.regional = [];
       app.people = { count: 0, unknown: false, list: [] };

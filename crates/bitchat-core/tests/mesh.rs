@@ -1,10 +1,12 @@
 //! Two app engines talking over their mesh nodes, wired back to back.
 
-use bitchat_core::engine::{Effect, Engine, MESH_CHANNEL, MeshPeer, mesh_key};
+use bitchat_core::engine::{ACCOUNT_SUB, Effect, Engine, MESH_CHANNEL, MeshPeer, mesh_key};
 use bitchat_core::model::{DmStatus, UiEvent};
 use bitchat_core::state::State;
 use bitchat_mesh::MeshIdentity;
 use bitchat_mesh::node::{MeshNode, Output};
+use bitchat_nostr::Event;
+use bitchat_nostr::net::PoolEvent;
 use std::collections::VecDeque;
 
 const T0: u64 = 1_790_000_000_000;
@@ -84,6 +86,7 @@ fn settle(sides: &mut [Side; 2], now: u64) {
             .peers()
             .map(|p| MeshPeer {
                 id: p.peer_id,
+                noise_public: p.noise_public,
                 nickname: p.nickname.clone(),
                 direct: p.direct,
             })
@@ -123,10 +126,9 @@ fn run(sides: &mut [Side; 2], from: u64, ms: u64) -> u64 {
     now
 }
 
-#[test]
-fn mesh_channel_people_messages_and_receipts() {
+/// Alice and Bob in #mesh, linked and introduced.
+fn meet() -> ([Side; 2], u64) {
     let mut sides = [Side::new("alice"), Side::new("bob")];
-    let (alice_key, bob_key) = (sides[0].key(), sides[1].key());
     let mut wire: Vec<(usize, Vec<u8>)> = Vec::new();
     for (i, side) in sides.iter_mut().enumerate() {
         side.engine.join_channel(MESH_CHANNEL, false, T0);
@@ -144,7 +146,14 @@ fn mesh_channel_people_messages_and_receipts() {
             }
         }
     }
-    let mut now = run(&mut sides, T0, 500);
+    let now = run(&mut sides, T0, 500);
+    (sides, now)
+}
+
+#[test]
+fn mesh_channel_people_messages_and_receipts() {
+    let (mut sides, mut now) = meet();
+    let (alice_key, bob_key) = (sides[0].key(), sides[1].key());
 
     assert!(sides[0].ui.iter().any(|e| matches!(e,
         UiEvent::Channel { geohash: Some(g), .. } if g == MESH_CHANNEL)));
@@ -201,4 +210,102 @@ fn mesh_channel_people_messages_and_receipts() {
     settle(&mut sides, now);
     run(&mut sides, now, 300);
     assert_eq!(status(&sides[0]), Some(DmStatus::Read));
+}
+
+/// Events an engine published to relays.
+fn published(side: &mut Side) -> Vec<Event> {
+    let mut out = Vec::new();
+    for effect in side.engine.take_effects() {
+        match effect {
+            Effect::Publish { event, .. } => out.push(event),
+            Effect::Ui(e) => side.ui.push(e),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn deliver_account(to: &mut Side, events: Vec<Event>, now: u64) {
+    for event in events {
+        to.engine.on_pool_event(
+            PoolEvent::Event {
+                subscription: ACCOUNT_SUB.into(),
+                relay: "wss://r".into(),
+                event,
+            },
+            now,
+        );
+    }
+}
+
+#[test]
+fn favorites_keep_talking_over_nostr_when_apart() {
+    let (mut sides, mut now) = meet();
+    let (alice_key, bob_key) = (sides[0].key(), sides[1].key());
+
+    // Favorite each other over Bluetooth: each learns the other's npub.
+    sides[0].engine.submit("/fav bob", now);
+    sides[1].engine.submit("/fav alice", now);
+    settle(&mut sides, now);
+    now = run(&mut sides, now, 1_000);
+    for (side, other) in [(0, &bob_key), (1, &alice_key)] {
+        let favs = sides[side].ui.iter().rev().find_map(|e| match e {
+            UiEvent::Favorites { items } => Some(items.clone()),
+            _ => None,
+        });
+        let f = favs
+            .unwrap()
+            .into_iter()
+            .find(|f| &f.peer == other)
+            .expect("favorite");
+        assert!(f.ours && f.theirs && f.reachable, "{f:?}");
+    }
+    assert!(
+        sides[1]
+            .ui
+            .iter()
+            .any(|e| matches!(e, UiEvent::System { text } if text.contains("favorited you")))
+    );
+    assert!(
+        !sides[1].ui.iter().any(|e| matches!(e, UiEvent::Dm { message, .. } if message.content.starts_with("[FAVORITED]"))),
+        "the marker is not shown as a message"
+    );
+
+    // Bob walks out of Bluetooth range.
+    sides[0].engine.set_mesh_peers(Vec::new(), now);
+    sides[1].engine.set_mesh_peers(Vec::new(), now);
+    sides[0].engine.send_dm(&bob_key, "are you home yet?", now);
+    let wraps = published(&mut sides[0]);
+    assert_eq!(wraps.len(), 1, "sent over Nostr");
+    assert_eq!(wraps[0].kind, 1059);
+    deliver_account(&mut sides[1], wraps, now);
+    for e in sides[1].engine.take_effects() {
+        if let Effect::Ui(e) = e {
+            sides[1].ui.push(e);
+        }
+    }
+    let got = sides[1].ui.iter().find_map(|e| match e {
+        UiEvent::Dm { peer, message } if !message.from_me => {
+            Some((peer.clone(), message.content.clone()))
+        }
+        _ => None,
+    });
+    assert_eq!(
+        got,
+        Some((alice_key.clone(), "are you home yet?".to_string())),
+        "filed under alice"
+    );
+
+    // Bob's delivered receipt goes back over Nostr too.
+    sides[1].engine.next_ack(now);
+    let acks = published(&mut sides[1]);
+    assert_eq!(acks.len(), 1);
+    deliver_account(&mut sides[0], acks, now);
+    for e in sides[0].engine.take_effects() {
+        if let Effect::Ui(e) = e {
+            sides[0].ui.push(e);
+        }
+    }
+    assert!(sides[0].ui.iter().any(|e| matches!(e,
+        UiEvent::DmStatus { peer, status: DmStatus::Delivered, .. } if *peer == bob_key)));
 }

@@ -75,6 +75,11 @@ fn wipe(app: State<'_, App>) {
     send(&app, Command::Wipe);
 }
 
+#[tauri::command]
+fn favorite(app: State<'_, App>, peer: String, on: bool) {
+    send(&app, Command::Favorite { peer, on });
+}
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
@@ -90,6 +95,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            favorite,
             join,
             leave,
             submit,

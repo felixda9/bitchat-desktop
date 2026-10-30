@@ -78,6 +78,21 @@ impl Identity {
     }
 }
 
+/// A mesh contact one of us favorited (iOS favorites). Favorites who gave us
+/// their Nostr key can be messaged over the internet when out of range.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Favorite {
+    #[serde(with = "hex32")]
+    pub noise_public: [u8; 32],
+    pub nickname: String,
+    /// Their Nostr key (lowercase hex), from their `[FAVORITED]:npub` message.
+    pub nostr_pubkey: Option<String>,
+    /// We favorited them.
+    pub ours: bool,
+    /// They favorited us.
+    pub theirs: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct State {
     pub identity: Identity,
@@ -93,6 +108,8 @@ pub struct State {
     pub last_channel: Option<String>,
     #[serde(default)]
     pub last_channel_manual: bool,
+    #[serde(default)]
+    pub favorites: Vec<Favorite>,
 }
 
 pub fn random_nickname() -> String {
@@ -117,6 +134,7 @@ impl State {
             blocked: BTreeSet::new(),
             last_channel: None,
             last_channel_manual: false,
+            favorites: Vec::new(),
         }
     }
 

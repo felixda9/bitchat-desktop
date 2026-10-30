@@ -5,11 +5,12 @@
 
 use crate::limits::{RateLimiter, content_key};
 use crate::model::*;
-use crate::state::{State, clean_nickname};
+use crate::state::{Favorite, State, clean_nickname};
 use bitchat_mesh::node::NodeEvent;
 use bitchat_nostr::embedded::{self, Addressing, Embedded};
 use bitchat_nostr::envelope;
 use bitchat_nostr::event::kind;
+use bitchat_nostr::keys::npub_decode;
 use bitchat_nostr::net::PoolEvent;
 use bitchat_nostr::relay_directory::{Directory, RELAYS_PER_CHANNEL};
 use bitchat_nostr::{Event, Filter, Keys, pow};
@@ -70,6 +71,10 @@ pub enum Effect {
 /// The Bluetooth channel's name; mesh peers are `mesh:<peer id hex>`.
 pub const MESH_CHANNEL: &str = "mesh";
 pub const MESH_PREFIX: &str = "mesh:";
+/// Someone who wrote to our main Nostr key without being a favorite.
+pub const NOSTR_PREFIX: &str = "nostr:";
+/// Subscription for private messages to our main Nostr key.
+pub const ACCOUNT_SUB: &str = "acct-dm";
 
 pub fn mesh_key(peer: &[u8; 8]) -> String {
     format!("{MESH_PREFIX}{}", hex::encode(peer))
@@ -85,6 +90,7 @@ pub fn mesh_peer_id(key: &str) -> Option<[u8; 8]> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MeshPeer {
     pub id: [u8; 8],
+    pub noise_public: [u8; 32],
     pub nickname: String,
     pub direct: bool,
 }
@@ -142,6 +148,7 @@ struct PendingAck {
     keys: Keys,
     peer: String,
     item: Embedded,
+    addressing: Addressing,
 }
 
 #[derive(Default)]
@@ -523,12 +530,18 @@ impl Engine {
 
     fn display_for(&self, pubkey: &str) -> String {
         if let Some(hex) = pubkey.strip_prefix(MESH_PREFIX) {
+            let favorite = mesh_peer_id(pubkey)
+                .and_then(|id| self.favorite_index(&id))
+                .map(|i| self.state.favorites[i].nickname.as_str());
             let nick = if pubkey == self.mesh.me {
                 Some(self.state.nickname.as_str())
             } else {
-                self.mesh.names.get(pubkey).map(String::as_str)
+                self.mesh.names.get(pubkey).map(String::as_str).or(favorite)
             };
             return display_name(nick, hex);
+        }
+        if let Some(hex) = pubkey.strip_prefix(NOSTR_PREFIX) {
+            return display_name(None, hex);
         }
         let nick = self
             .channel
@@ -562,6 +575,7 @@ impl Engine {
                 },
                 teleported: p.teleported,
                 me: *pk == me,
+                favorite: false,
             })
             .collect();
         // Nearby first, then teleported, alphabetical within each.
@@ -606,6 +620,10 @@ impl Engine {
                 event,
                 ..
             } => {
+                if subscription == ACCOUNT_SUB {
+                    self.on_account_wrap(event, now_ms);
+                    return;
+                }
                 let Some(gh) = self.current_geohash().map(str::to_string) else {
                     if subscription == NOTES_SUB {
                         self.on_note(event, now_ms);
@@ -801,12 +819,14 @@ impl Engine {
                     item: Embedded::Delivered {
                         message_id: message_id.clone(),
                     },
+                    addressing: Addressing::Geohash,
                 });
                 if is_open {
                     self.acks.push_back(PendingAck {
                         keys,
                         peer: peer.clone(),
                         item: Embedded::ReadReceipt { message_id },
+                        addressing: Addressing::Geohash,
                     });
                 }
                 self.ui(UiEvent::Dm { peer, message });
@@ -846,6 +866,7 @@ impl Engine {
             .map(|(peer, c)| ConversationSummary {
                 peer: peer.clone(),
                 display: self.display_for(peer),
+                favorite: self.is_favorite(peer),
                 geohash: c.geohash.clone(),
                 unread: c.unread,
                 last: c.messages.last().map(|m| m.content.clone()),
@@ -859,7 +880,7 @@ impl Engine {
         let Some(ack) = self.acks.pop_front() else {
             return;
         };
-        let Some(content) = embedded::encode(&ack.item, Addressing::Geohash, now_ms) else {
+        let Some(content) = embedded::encode(&ack.item, ack.addressing, now_ms) else {
             return;
         };
         let Ok(wrap) = envelope::create_private_message(
@@ -1027,12 +1048,23 @@ impl Engine {
             for message_id in unread.into_iter().rev() {
                 self.mesh_ack(id, PayloadType::ReadReceipt, &message_id);
             }
+        } else if let Some(pubkey) = peer.strip_prefix(NOSTR_PREFIX) {
+            let keys = self.state.identity.nostr_keys();
+            for message_id in unread.into_iter().rev() {
+                self.acks.push_back(PendingAck {
+                    keys: keys.clone(),
+                    peer: pubkey.to_string(),
+                    item: Embedded::ReadReceipt { message_id },
+                    addressing: Addressing::Geohash,
+                });
+            }
         } else if let Some(keys) = keys {
             for message_id in unread.into_iter().rev() {
                 self.acks.push_back(PendingAck {
                     keys: keys.clone(),
                     peer: peer.clone(),
                     item: Embedded::ReadReceipt { message_id },
+                    addressing: Addressing::Geohash,
                 });
             }
         }
@@ -1052,6 +1084,10 @@ impl Engine {
     pub fn send_dm(&mut self, peer: &str, text: &str, now_ms: u64) {
         if let Some(id) = mesh_peer_id(&peer.to_lowercase()) {
             self.send_mesh_dm(id, text, now_ms);
+            return;
+        }
+        if peer.starts_with(NOSTR_PREFIX) {
+            self.send_account_dm(peer, text, now_ms);
             return;
         }
         let Some(c) = &self.channel else {
@@ -1252,6 +1288,7 @@ impl Engine {
             .filter(|(k, _)| !self.state.blocked.contains(k))
             .map(|(k, p)| Person {
                 display: display_name(Some(&p.nickname), &hex::encode(p.id)),
+                favorite: self.is_favorite(&k),
                 pubkey: k,
                 // Heard through other devices rather than directly.
                 teleported: !p.direct,
@@ -1264,6 +1301,7 @@ impl Engine {
             pubkey: me,
             teleported: false,
             me: true,
+            favorite: false,
         });
         people.sort_by(|a, b| {
             a.teleported
@@ -1336,10 +1374,39 @@ impl Engine {
         }
     }
 
+    /// Receipts go back the way the peer can be reached: Bluetooth, or
+    /// paced over Nostr for a favorite who is away.
     fn mesh_ack(&mut self, peer: [u8; 8], kind: PayloadType, message_id: &str) {
-        self.effects.push(Effect::MeshPrivate {
-            peer,
-            payload: NoisePayload::ack(kind, message_id).encode(),
+        if self.mesh_online(&peer) {
+            self.effects.push(Effect::MeshPrivate {
+                peer,
+                payload: NoisePayload::ack(kind, message_id).encode(),
+            });
+            return;
+        }
+        let Some(pubkey) = self
+            .favorite_index(&peer)
+            .and_then(|i| self.state.favorites[i].nostr_pubkey.clone())
+        else {
+            return;
+        };
+        let item = if kind == PayloadType::Delivered {
+            Embedded::Delivered {
+                message_id: message_id.to_string(),
+            }
+        } else {
+            Embedded::ReadReceipt {
+                message_id: message_id.to_string(),
+            }
+        };
+        self.acks.push_back(PendingAck {
+            keys: self.state.identity.nostr_keys(),
+            peer: pubkey,
+            item,
+            addressing: Addressing::Account {
+                sender: self.my_mesh_id(),
+                recipient: peer,
+            },
         });
     }
 
@@ -1361,19 +1428,27 @@ impl Engine {
             return;
         }
         let message_id = new_message_id();
-        let Some(body) = PrivateMessage::new(message_id.clone(), text).encode() else {
-            return;
+        let item = Embedded::PrivateMessage {
+            message_id: message_id.clone(),
+            content: text.to_string(),
         };
-        self.effects.push(Effect::MeshPrivate {
-            peer: id,
-            payload: NoisePayload::new(PayloadType::PrivateMessage, body).encode(),
-        });
+        let sent = self.route_private(id, item, now_ms);
+        if !sent {
+            let name = self.display_for(&peer);
+            self.system(format!(
+                "{name} isn't nearby, and can only be reached online after they favorite you"
+            ));
+        }
         let message = DmMessage {
             id: message_id,
             from_me: true,
             content: text.to_string(),
             timestamp: now_ms,
-            status: Some(DmStatus::Sent),
+            status: Some(if sent {
+                DmStatus::Sent
+            } else {
+                DmStatus::Failed
+            }),
         };
         let conv = self.dms.entry(peer.clone()).or_default();
         conv.geohash = MESH_CHANNEL.into();
@@ -1435,6 +1510,16 @@ impl Engine {
                 let Some(m) = PrivateMessage::decode(&payload.data) else {
                     return;
                 };
+                if m.content.starts_with("[FAVORITED]") || m.content.starts_with("[UNFAVORITED]") {
+                    let noise = self
+                        .mesh
+                        .peers
+                        .iter()
+                        .find(|p| p.id == from)
+                        .map(|p| p.noise_public);
+                    self.on_favorite_marker(from, noise, &m.content, now_ms);
+                    return;
+                }
                 if self.state.blocked.contains(&peer) {
                     return;
                 }
@@ -1479,6 +1564,396 @@ impl Engine {
             }
             _ => {}
         }
+    }
+
+    // ---- favorites and internet DMs (iOS favorites + NostrTransport) ----
+
+    /// Listens for private messages to our main Nostr key; favorites who
+    /// are out of Bluetooth range reach us there.
+    pub fn start_account(&mut self, now_ms: u64) {
+        let keys = self.state.identity.nostr_keys();
+        let now = (now_ms / 1000) as i64;
+        self.effects.push(Effect::Subscribe {
+            id: ACCOUNT_SUB.into(),
+            filter: Filter::gift_wraps_for(&keys.public_key_hex(), Some(now - DM_LOOKBACK_SECS)),
+            relays: self.state.dm_relays(),
+        });
+        self.emit_favorites();
+    }
+
+    fn my_mesh_id(&self) -> [u8; 8] {
+        mesh_peer_id(&self.mesh.me).expect("own mesh key")
+    }
+
+    fn favorite_index(&self, id: &[u8; 8]) -> Option<usize> {
+        self.state
+            .favorites
+            .iter()
+            .position(|f| bitchat_noise::peer_id(&f.noise_public) == *id)
+    }
+
+    fn noise_key_of(&self, id: &[u8; 8]) -> Option<[u8; 32]> {
+        self.mesh
+            .peers
+            .iter()
+            .find(|p| p.id == *id)
+            .map(|p| p.noise_public)
+            .or_else(|| {
+                self.favorite_index(id)
+                    .map(|i| self.state.favorites[i].noise_public)
+            })
+    }
+
+    /// We marked this mesh peer as a favorite.
+    pub fn is_favorite(&self, key: &str) -> bool {
+        mesh_peer_id(key)
+            .and_then(|id| self.favorite_index(&id))
+            .is_some_and(|i| self.state.favorites[i].ours)
+    }
+
+    fn mesh_online(&self, id: &[u8; 8]) -> bool {
+        self.mesh.peers.iter().any(|p| p.id == *id)
+    }
+
+    /// `/fav`, `/unfav` and the star: (un)favorite a mesh peer and tell
+    /// them our Nostr key so they can reach us when we're apart.
+    pub fn set_favorite(&mut self, key: &str, on: bool, now_ms: u64) {
+        let Some(id) = mesh_peer_id(key) else {
+            self.system("favorites are only for mesh peers in #mesh");
+            return;
+        };
+        let Some(noise_public) = self.noise_key_of(&id) else {
+            self.system("can't favorite someone who hasn't been seen on the mesh");
+            return;
+        };
+        let nickname = self.mesh.names.get(key).cloned().unwrap_or_default();
+        match self.favorite_index(&id) {
+            Some(i) => {
+                let f = &mut self.state.favorites[i];
+                f.ours = on;
+                if !nickname.is_empty() {
+                    f.nickname = nickname;
+                }
+            }
+            None if on => self.state.favorites.push(Favorite {
+                noise_public,
+                nickname,
+                nostr_pubkey: None,
+                ours: true,
+                theirs: false,
+            }),
+            None => {}
+        }
+        self.state.favorites.retain(|f| f.ours || f.theirs);
+        self.effects.push(Effect::Save);
+        let npub = self.state.identity.nostr_keys().npub();
+        let marker = if on {
+            format!("[FAVORITED]:{npub}")
+        } else {
+            format!("[UNFAVORITED]:{npub}")
+        };
+        let item = Embedded::PrivateMessage {
+            message_id: new_message_id(),
+            content: marker,
+        };
+        self.route_private(id, item, now_ms);
+        let name = self.display_for(key);
+        self.system(if on {
+            format!("added {name} to favorites")
+        } else {
+            format!("removed {name} from favorites")
+        });
+        self.emit_favorites();
+        self.emit_people((now_ms / 1000) as i64);
+        self.emit_conversations();
+    }
+
+    pub fn emit_favorites(&mut self) {
+        let items = self
+            .state
+            .favorites
+            .iter()
+            .map(|f| {
+                let id = bitchat_noise::peer_id(&f.noise_public);
+                let key = mesh_key(&id);
+                FavoriteSummary {
+                    display: display_name(Some(&f.nickname), &hex::encode(id)),
+                    online: self.mesh_online(&id),
+                    reachable: f.nostr_pubkey.is_some(),
+                    ours: f.ours,
+                    theirs: f.theirs,
+                    peer: key,
+                }
+            })
+            .collect();
+        self.ui(UiEvent::Favorites { items });
+    }
+
+    /// Bluetooth while they're around, else Nostr if they gave us their key.
+    fn route_private(&mut self, id: [u8; 8], item: Embedded, now_ms: u64) -> bool {
+        if self.mesh_online(&id) {
+            let payload = match &item {
+                Embedded::PrivateMessage {
+                    message_id,
+                    content,
+                } => {
+                    let Some(body) =
+                        PrivateMessage::new(message_id.clone(), content.clone()).encode()
+                    else {
+                        return false;
+                    };
+                    NoisePayload::new(PayloadType::PrivateMessage, body)
+                }
+                Embedded::Delivered { message_id } => {
+                    NoisePayload::ack(PayloadType::Delivered, message_id)
+                }
+                Embedded::ReadReceipt { message_id } => {
+                    NoisePayload::ack(PayloadType::ReadReceipt, message_id)
+                }
+            };
+            self.effects.push(Effect::MeshPrivate {
+                peer: id,
+                payload: payload.encode(),
+            });
+            return true;
+        }
+        let Some(pubkey) = self
+            .favorite_index(&id)
+            .and_then(|i| self.state.favorites[i].nostr_pubkey.clone())
+        else {
+            return false;
+        };
+        let addressing = Addressing::Account {
+            sender: self.my_mesh_id(),
+            recipient: id,
+        };
+        self.publish_account(&pubkey, &item, addressing, now_ms)
+    }
+
+    fn publish_account(
+        &mut self,
+        pubkey: &str,
+        item: &Embedded,
+        addressing: Addressing,
+        now_ms: u64,
+    ) -> bool {
+        let keys = self.state.identity.nostr_keys();
+        let Some(content) = embedded::encode(item, addressing, now_ms) else {
+            return false;
+        };
+        let Ok(wrap) =
+            envelope::create_private_message(&content, pubkey, &keys, (now_ms / 1000) as i64)
+        else {
+            return false;
+        };
+        let relays = self.state.dm_relays();
+        self.effects.push(Effect::Publish {
+            event: wrap,
+            relays,
+        });
+        true
+    }
+
+    /// `[FAVORITED]:npub…` / `[UNFAVORITED]:npub…` from a mesh peer.
+    fn on_favorite_marker(
+        &mut self,
+        id: [u8; 8],
+        noise_public: Option<[u8; 32]>,
+        content: &str,
+        now_ms: u64,
+    ) {
+        let on = content.starts_with("[FAVORITED]");
+        let pubkey = content
+            .split_once(':')
+            .and_then(|(_, npub)| npub_decode(npub.trim()))
+            .map(hex::encode);
+        let key = mesh_key(&id);
+        let nickname = self.mesh.names.get(&key).cloned().unwrap_or_default();
+        match self.favorite_index(&id) {
+            Some(i) => {
+                let f = &mut self.state.favorites[i];
+                f.theirs = on;
+                if pubkey.is_some() {
+                    f.nostr_pubkey = pubkey;
+                }
+                if !nickname.is_empty() {
+                    f.nickname = nickname;
+                }
+            }
+            None => {
+                if let Some(noise_public) = noise_public
+                    && on
+                {
+                    self.state.favorites.push(Favorite {
+                        noise_public,
+                        nickname,
+                        nostr_pubkey: pubkey,
+                        ours: false,
+                        theirs: true,
+                    });
+                }
+            }
+        }
+        self.state.favorites.retain(|f| f.ours || f.theirs);
+        self.effects.push(Effect::Save);
+        let name = self.display_for(&key);
+        self.system(if on {
+            format!("{name} favorited you")
+        } else {
+            format!("{name} unfavorited you")
+        });
+        self.emit_favorites();
+        self.emit_people((now_ms / 1000) as i64);
+    }
+
+    /// A private message to our main Nostr key.
+    fn on_account_wrap(&mut self, wrap: Event, now_ms: u64) {
+        if !self.seen_wraps.insert(&wrap.id) {
+            return;
+        }
+        let keys = self.state.identity.nostr_keys();
+        let Ok(opened) = envelope::open_private_message(&wrap, &keys) else {
+            return;
+        };
+        if !envelope::is_plausible_rumor_timestamp(opened.timestamp, (now_ms / 1000) as i64) {
+            return;
+        }
+        let Some((_, item)) = embedded::decode(&opened.content) else {
+            return;
+        };
+        let sender = opened.sender.to_lowercase();
+        // Only the envelope's signature says who sent it: match favorites by
+        // Nostr key, never by the peer ID inside the packet.
+        let favorite = self
+            .state
+            .favorites
+            .iter()
+            .find(|f| f.nostr_pubkey.as_deref() == Some(sender.as_str()))
+            .map(|f| bitchat_noise::peer_id(&f.noise_public));
+        let key = match favorite {
+            Some(id) => mesh_key(&id),
+            None => format!("{NOSTR_PREFIX}{sender}"),
+        };
+        match item {
+            Embedded::PrivateMessage {
+                message_id,
+                content,
+            } => {
+                if content.starts_with("[FAVORITED]") || content.starts_with("[UNFAVORITED]") {
+                    if let Some(id) = favorite {
+                        self.on_favorite_marker(id, None, &content, now_ms);
+                    }
+                    return;
+                }
+                if self.state.blocked.contains(&key) {
+                    return;
+                }
+                let message = DmMessage {
+                    id: message_id.clone(),
+                    from_me: false,
+                    content,
+                    timestamp: (opened.timestamp.max(0) as u64) * 1000,
+                    status: None,
+                };
+                if !self.add_incoming_dm(&key, message) {
+                    return;
+                }
+                let addressing = match favorite {
+                    Some(id) => Addressing::Account {
+                        sender: self.my_mesh_id(),
+                        recipient: id,
+                    },
+                    None => Addressing::Geohash,
+                };
+                let is_open = self.open_dm.as_deref() == Some(key.as_str());
+                self.acks.push_back(PendingAck {
+                    keys: keys.clone(),
+                    peer: sender.clone(),
+                    item: Embedded::Delivered {
+                        message_id: message_id.clone(),
+                    },
+                    addressing,
+                });
+                if is_open {
+                    self.acks.push_back(PendingAck {
+                        keys,
+                        peer: sender,
+                        item: Embedded::ReadReceipt { message_id },
+                        addressing,
+                    });
+                }
+            }
+            Embedded::Delivered { message_id } => {
+                self.update_status(&key, &message_id, DmStatus::Delivered)
+            }
+            Embedded::ReadReceipt { message_id } => {
+                self.update_status(&key, &message_id, DmStatus::Read)
+            }
+        }
+    }
+
+    /// Files an incoming DM; false if it was already there.
+    fn add_incoming_dm(&mut self, key: &str, message: DmMessage) -> bool {
+        let is_open = self.open_dm.as_deref() == Some(key);
+        let conv = self.dms.entry(key.to_string()).or_default();
+        if conv.geohash.is_empty() {
+            conv.geohash = MESH_CHANNEL.into();
+        }
+        if conv
+            .messages
+            .iter()
+            .any(|m| m.id == message.id && !m.from_me)
+        {
+            return false;
+        }
+        conv.messages.push(message.clone());
+        if !is_open {
+            conv.unread += 1;
+        }
+        self.ui(UiEvent::Dm {
+            peer: key.to_string(),
+            message,
+        });
+        self.emit_conversations();
+        true
+    }
+
+    /// Replies to someone who wrote to our main key without being a favorite.
+    fn send_account_dm(&mut self, key: &str, text: &str, now_ms: u64) {
+        let Some(pubkey) = key.strip_prefix(NOSTR_PREFIX).map(str::to_string) else {
+            return;
+        };
+        if text.len() > PRIVATE_MESSAGE_FIELD_MAX {
+            self.system(format!(
+                "message too long for a private message ({} of {PRIVATE_MESSAGE_FIELD_MAX} bytes)",
+                text.len()
+            ));
+            return;
+        }
+        let message_id = new_message_id();
+        let item = Embedded::PrivateMessage {
+            message_id: message_id.clone(),
+            content: text.to_string(),
+        };
+        let sent = self.publish_account(&pubkey, &item, Addressing::Geohash, now_ms);
+        let message = DmMessage {
+            id: message_id,
+            from_me: true,
+            content: text.to_string(),
+            timestamp: now_ms,
+            status: Some(if sent {
+                DmStatus::Sent
+            } else {
+                DmStatus::Failed
+            }),
+        };
+        let conv = self.dms.entry(key.to_string()).or_default();
+        conv.messages.push(message.clone());
+        self.ui(UiEvent::Dm {
+            peer: key.to_string(),
+            message,
+        });
+        self.emit_conversations();
     }
 
     // ---- presence ----------------------------------------------------

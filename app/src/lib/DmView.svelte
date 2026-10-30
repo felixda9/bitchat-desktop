@@ -29,6 +29,10 @@
   <div class="bar">
     <span style:color={colorFor(app.dm.peer)}>#{app.conversations.find((c) => c.peer === app.dm?.peer)?.geohash || app.channel?.geohash || ""}/@{app.dm.display}</span>
     <span class="spacer"></span>
+    {#if app.dm.peer.startsWith("mesh:")}
+      {@const fav = app.favorites.find((f) => f.peer === app.dm?.peer)?.ours ?? false}
+      <button title={fav ? "remove from favorites" : "add to favorites"} onclick={() => app.dm && api.favorite(app.dm.peer, !fav)}>{fav ? "★" : "☆"}</button>
+    {/if}
     <button onclick={() => api.openDm(null)}>close</button>
   </div>
   <div class="lines" bind:this={box}>

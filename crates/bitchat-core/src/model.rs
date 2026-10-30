@@ -23,6 +23,21 @@ pub struct Person {
     pub display: String,
     pub teleported: bool,
     pub me: bool,
+    /// A mesh peer we favorited.
+    pub favorite: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct FavoriteSummary {
+    /// `mesh:<peer id>`
+    pub peer: String,
+    pub display: String,
+    /// Around on Bluetooth right now.
+    pub online: bool,
+    /// We have their Nostr key, so DMs work when they're away.
+    pub reachable: bool,
+    pub ours: bool,
+    pub theirs: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -47,6 +62,7 @@ pub struct DmMessage {
 pub struct ConversationSummary {
     pub peer: String,
     pub display: String,
+    pub favorite: bool,
     pub geohash: String,
     pub unread: usize,
     pub last: Option<String>,
@@ -143,5 +159,8 @@ pub enum UiEvent {
     Mesh {
         state: String,
         links: usize,
+    },
+    Favorites {
+        items: Vec<FavoriteSummary>,
     },
 }

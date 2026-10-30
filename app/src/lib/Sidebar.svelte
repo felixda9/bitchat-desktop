@@ -46,11 +46,29 @@
     {#each app.people.list as p (p.pubkey)}
       <li>
         <button disabled={p.me} style:color={colorFor(p.pubkey)} onclick={() => api.openDm(p.pubkey)}>
-          {p.display}{#if p.me} (you){/if}{#if p.teleported} ↗{/if}
+          {#if p.favorite}★ {/if}{p.display}{#if p.me} (you){/if}{#if p.teleported} ↗{/if}
         </button>
       </li>
     {/each}
   </ul>
+
+  {#if app.favorites.length}
+    <h3>favorites</h3>
+    <ul>
+      {#each app.favorites as f (f.peer)}
+        <li>
+          <button
+            class:offline={!f.online}
+            title={f.online ? "nearby on bluetooth" : f.reachable ? "away — messages go over the internet" : "away — they need to favorite you before you can reach them online"}
+            onclick={() => api.openDm(f.peer)}
+          >
+            {f.ours ? "★" : "☆"} <span style:color={colorFor(f.peer)}>{f.display}</span>
+            {#if !f.online}<span class="muted">{f.reachable ? "· online" : "· away"}</span>{/if}
+          </button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
 
   {#if app.conversations.length}
     <h3>private chats</h3>
@@ -110,6 +128,9 @@
   }
   button.active {
     text-decoration: underline;
+  }
+  button.offline {
+    opacity: 0.75;
   }
   .badge {
     background: var(--accent);

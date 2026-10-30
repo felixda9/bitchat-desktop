@@ -41,7 +41,8 @@ pub fn run(engine: &mut Engine, input: &str, now_ms: u64) {
         "/block" => block(engine, args, now_ms),
         "/unblock" => unblock(engine, args, now_ms),
         "/group" => engine.reply("groups are only for mesh peers in #mesh"),
-        "/fav" | "/unfav" => engine.reply("favorites are only for mesh peers in #mesh"),
+        "/fav" => favorite(engine, args, true, now_ms),
+        "/unfav" => favorite(engine, args, false, now_ms),
         "/ping" => engine.reply("ping only works for mesh peers in #mesh"),
         "/trace" => engine.reply("trace only works for mesh peers in #mesh"),
         "/pay" => engine.reply("cashu payments aren't supported in the desktop client yet"),
@@ -199,4 +200,25 @@ fn drop(engine: &mut Engine, args: &str, now_ms: u64) {
         Ok(()) => engine.reply("📍 note left here — it fades in 24h"),
         Err(e) => engine.reply(e),
     }
+}
+
+fn favorite(engine: &mut Engine, args: &str, on: bool, now_ms: u64) {
+    if !engine.in_mesh() {
+        engine.reply("favorites are only for mesh peers in #mesh");
+        return;
+    }
+    let nickname = args.split_whitespace().next().unwrap_or("");
+    if nickname.is_empty() {
+        engine.reply(if on {
+            "usage: /fav <nickname>"
+        } else {
+            "usage: /unfav <nickname>"
+        });
+        return;
+    }
+    let Some(peer) = engine.resolve_nickname(nickname, now_ms) else {
+        engine.reply(format!("'{nickname}' not found"));
+        return;
+    };
+    engine.set_favorite(&peer, on, now_ms);
 }

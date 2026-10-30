@@ -8,10 +8,12 @@
     { name: "/unblock", hint: "<nickname>", about: "unblock someone" },
     { name: "/clear", hint: "", about: "clear this chat" },
     { name: "/drop", hint: "<note>", about: "pin a note here for 24h (needs location)" },
+    { name: "/fav", hint: "<nickname>", about: "favorite a mesh peer (keep chatting online when apart)" },
     { name: "/help", hint: "", about: "list commands" },
     { name: "/hug", hint: "<nickname>", about: "send a hug" },
     { name: "/msg", hint: "<nickname> [message]", about: "start a private chat" },
     { name: "/slap", hint: "<nickname>", about: "slap with a large trout" },
+    { name: "/unfav", hint: "<nickname>", about: "remove a favorite" },
     { name: "/who", hint: "", about: "list who's here" },
   ];
 

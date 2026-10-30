@@ -17,6 +17,16 @@ export interface Person {
   display: string;
   teleported: boolean;
   me: boolean;
+  favorite: boolean;
+}
+
+export interface FavoriteSummary {
+  peer: string;
+  display: string;
+  online: boolean;
+  reachable: boolean;
+  ours: boolean;
+  theirs: boolean;
 }
 
 export type DmStatus = "sent" | "delivered" | "read" | "failed";
@@ -32,6 +42,7 @@ export interface DmMessage {
 export interface Conversation {
   peer: string;
   display: string;
+  favorite: boolean;
   geohash: string;
   unread: number;
   last: string | null;
@@ -67,6 +78,7 @@ export type UiEvent =
   | { type: "tor"; state: string; progress: number; summary: string }
   | { type: "relay"; url: string; status: string }
   | { type: "mesh"; state: string; links: number }
+  | { type: "favorites"; items: FavoriteSummary[] }
   | {
       type: "settings";
       nickname: string;
@@ -94,6 +106,7 @@ export const api = {
   locate: () => invoke<[number, number]>("locate"),
   refresh: () => invoke("refresh"),
   wipe: () => invoke("wipe"),
+  favorite: (peer: string, on: boolean) => invoke("favorite", { peer, on }),
 };
 
 const GEOHASH = /^[0-9bcdefghjkmnpqrstuvwxyz]{1,12}$/;

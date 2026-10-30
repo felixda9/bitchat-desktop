@@ -59,6 +59,11 @@ pub enum Command {
     Wipe,
     /// The UI (re)connected: send the full view again.
     Refresh,
+    /// Star or unstar a mesh peer (`mesh:<peer id>`).
+    Favorite {
+        peer: String,
+        on: bool,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -290,6 +295,7 @@ impl Runner {
             .peers()
             .map(|p| MeshPeer {
                 id: p.peer_id,
+                noise_public: p.noise_public,
                 nickname: p.nickname.clone(),
                 direct: p.direct,
             })
@@ -419,8 +425,10 @@ impl Runner {
             Command::RemoveRelay { url } => self.engine.remove_relay(&url, now),
             Command::SetLocation { fix } => self.engine.set_location(fix, now),
             Command::Wipe => self.wipe(),
+            Command::Favorite { peer, on } => self.engine.set_favorite(&peer, on, now),
             Command::Refresh => {
                 self.engine.announce(now);
+                self.engine.emit_favorites();
                 self.emit_tor();
                 let (state, links) = self.radio.clone();
                 self.engine.set_mesh_radio(&state, links);
@@ -456,6 +464,7 @@ impl Runner {
         self.pool.set_dialer(self.dialer());
         (self.sink)(UiEvent::Wiped);
         self.engine.announce(now_ms());
+        self.engine.start_account(now_ms());
         self.emit_tor();
     }
 
@@ -553,6 +562,7 @@ async fn run(
     }
     runner.pool.set_dialer(runner.dialer());
     runner.engine.announce(now_ms());
+    runner.engine.start_account(now_ms());
     runner.emit_tor();
     runner.apply();
     runner.refresh_directory();
