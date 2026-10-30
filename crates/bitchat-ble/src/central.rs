@@ -344,7 +344,9 @@ impl State {
         if !props.services.contains(&SERVICE_UUID) {
             return;
         }
-        if props.rssi.is_some_and(|r| r < RSSI_THRESHOLD) {
+        // No RSSI: a device the stack remembers but isn't hearing now
+        // (BlueZ lists those); connecting would only time out.
+        if props.rssi.is_none_or(|r| r < RSSI_THRESHOLD) {
             return;
         }
         if is_incoming(props.address.into_inner()) {
