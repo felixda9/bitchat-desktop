@@ -49,9 +49,16 @@ Works with bitchat **1.8** for iPhone and Mac and **2.2** for Android. The packe
 
 The Bluetooth built into most laptops is all you need for `#mesh`; a desktop without Bluetooth can use any USB dongle. Without Bluetooth, everything that goes over the internet still works.
 
-## Build
+## Install
 
-There are no downloads yet. You need Rust and Node.js. On Linux also install `libwebkit2gtk-4.1-dev librsvg2-dev libssl-dev libdbus-1-dev`.
+Download the latest version from [Releases](https://github.com/felixda9/bitchat-desktop/releases/latest).
+
+- **Windows:** run `bitchat_x.y.z_x64-setup.exe`. The installer isn't signed, so Windows may say it protected your PC: click *More info*, then *Run anyway*.
+- **Linux:** install the `.deb` (`sudo apt install ./bitchat_x.y.z_amd64.deb`) or make the `.AppImage` executable and run it.
+
+## Build from source
+
+You need Rust and Node.js. On Linux also install `libwebkit2gtk-4.1-dev librsvg2-dev libssl-dev libdbus-1-dev`.
 
 ```
 cd app
