@@ -34,9 +34,15 @@ const DEFAULT_ATT_MTU: u16 = 23;
 /// A phone restarts its advertising with a fresh address when we connect.
 /// An address first seen this soon after a connection attempt is taken to be
 /// that phone again and left alone while the link lives.
-const READVERTISE_WINDOW: Duration = Duration::from_secs(30);
+const READVERTISE_WINDOW: Duration = Duration::from_secs(10);
 /// ...but checked again after this long, in case it was someone else.
 const PRESUME_FOR: Duration = Duration::from_secs(300);
+/// After a connection turns out to be a phone we already had, wait before
+/// trying unknown addresses again: 30 s, doubling up to 5 minutes.
+const DUPLICATE_BACKOFF_MIN: Duration = Duration::from_secs(30);
+const DUPLICATE_BACKOFF_MAX: Duration = Duration::from_secs(300);
+/// The backoff starts over after this long without a duplicate.
+const DUPLICATE_BACKOFF_RESET: Duration = Duration::from_secs(600);
 /// Used when the stack never reports a real MTU; larger writes go with response.
 const FALLBACK_MAX_WRITE: usize = 182;
 
@@ -69,10 +75,12 @@ pub enum BleEvent {
 }
 
 type Writers = Arc<Mutex<HashMap<LinkId, mpsc::UnboundedSender<Vec<u8>>>>>;
+type Requests = mpsc::UnboundedSender<Request>;
 
 /// Handle to the running central. Dropping it stops scanning and connections.
 pub struct Central {
     writers: Writers,
+    requests: Requests,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -86,8 +94,13 @@ impl Central {
     /// Starts scanning on the first adapter; events go to `events`.
     pub fn start(events: mpsc::UnboundedSender<BleEvent>) -> Central {
         let writers: Writers = Arc::default();
-        let task = tokio::spawn(run(events, writers.clone()));
-        Central { writers, task }
+        let (requests, requests_rx) = mpsc::unbounded_channel();
+        let task = tokio::spawn(run(events, writers.clone(), requests_rx));
+        Central {
+            writers,
+            requests,
+            task,
+        }
     }
 
     /// Queues a frame for a link; frames on one link go out in order.
@@ -100,11 +113,12 @@ impl Central {
         }
     }
 
-    /// Disconnects a link (after its queued writes).
+    /// Disconnects a link the mesh found redundant (after its queued writes).
     pub fn close(&self, link: LinkId) {
         if let Some(tx) = self.writers.lock().expect("writers").get(&link) {
             let _ = tx.send(Vec::new());
         }
+        let _ = self.requests.send(Request::Duplicate(link));
     }
 }
 
@@ -124,6 +138,15 @@ struct State {
     /// Addresses taken to be a connected phone's new advertisement.
     presumed: HashMap<PeripheralId, (LinkId, Instant)>,
     seen: HashSet<PeripheralId>,
+    /// No connections to unknown addresses before this (duplicate backoff).
+    explore_after: Option<Instant>,
+    backoff: Duration,
+    last_duplicate: Option<Instant>,
+}
+
+enum Request {
+    /// The mesh found this link redundant (same peer on a newer one).
+    Duplicate(LinkId),
 }
 
 enum Done {
@@ -132,7 +155,11 @@ enum Done {
     Closed(PeripheralId, LinkId),
 }
 
-async fn run(events: mpsc::UnboundedSender<BleEvent>, writers: Writers) {
+async fn run(
+    events: mpsc::UnboundedSender<BleEvent>,
+    writers: Writers,
+    mut requests: mpsc::UnboundedReceiver<Request>,
+) {
     let status = |s| {
         let _ = events.send(BleEvent::Status(s));
     };
@@ -166,6 +193,9 @@ async fn run(events: mpsc::UnboundedSender<BleEvent>, writers: Writers) {
         attempts: Vec::new(),
         presumed: HashMap::new(),
         seen: HashSet::new(),
+        explore_after: None,
+        backoff: DUPLICATE_BACKOFF_MIN,
+        last_duplicate: None,
     };
     let (done_tx, mut done_rx) = mpsc::unbounded_channel::<Done>();
     let mut scanning = false;
@@ -198,6 +228,7 @@ async fn run(events: mpsc::UnboundedSender<BleEvent>, writers: Writers) {
                 }
             }
             Some(done) = done_rx.recv() => st.finished(done),
+            Some(Request::Duplicate(link)) = requests.recv() => st.duplicate(link),
             _ = sweep.tick() => {
                 // Some stacks report a device only once: look again.
                 if scanning && let Ok(list) = st.adapter.peripherals().await {
@@ -277,6 +308,10 @@ impl State {
         if self.retry_at.get(&id).is_some_and(|at| now < *at) {
             return;
         }
+        // With nothing connected, any bitchat device is worth a try.
+        if self.links() > 0 && self.explore_after.is_some_and(|at| now < at) {
+            return;
+        }
         let Ok(peripheral) = self.adapter.peripheral(&id).await else {
             return;
         };
@@ -327,6 +362,23 @@ impl State {
             }
         }
         self.status();
+    }
+
+    fn duplicate(&mut self, link: LinkId) {
+        let now = Instant::now();
+        if self
+            .last_duplicate
+            .is_some_and(|at| now.duration_since(at) > DUPLICATE_BACKOFF_RESET)
+        {
+            self.backoff = DUPLICATE_BACKOFF_MIN;
+        }
+        self.last_duplicate = Some(now);
+        self.explore_after = Some(now + self.backoff);
+        log::info!(
+            "ble: link {link} was a duplicate; next new device check in {}s",
+            self.backoff.as_secs()
+        );
+        self.backoff = (self.backoff * 2).min(DUPLICATE_BACKOFF_MAX);
     }
 
     fn disconnected(&mut self, id: &PeripheralId) {
